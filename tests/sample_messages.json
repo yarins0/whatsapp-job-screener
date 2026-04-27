@@ -1,0 +1,76 @@
+[
+  {
+    "id": "job_1_en",
+    "is_job_post": true,
+    "text": "We're hiring a Senior Backend Engineer at Acme Inc. Stack: Python, FastAPI, PostgreSQL. Tel Aviv (hybrid, 2 days remote). Salary 30-40k ILS + options. Send CV to jobs@acme.io or DM @recruiter.",
+    "expected": {
+      "title": "Senior Backend Engineer",
+      "company": "Acme Inc.",
+      "location": "Tel Aviv",
+      "remote": true,
+      "skills": ["Python", "FastAPI", "PostgreSQL"],
+      "salary": "30-40k ILS",
+      "contact": "jobs@acme.io"
+    }
+  },
+  {
+    "id": "job_2_he",
+    "is_job_post": true,
+    "text": "דרוש/ה מפתח/ת Node.js סיניור לסטארטאפ פינטק בהרצליה. דרישות: Node.js, TypeScript, AWS. שכר תחרותי. קו\"ח ל-careers@finstart.co.il",
+    "expected": {
+      "title": "מפתח/ת Node.js סיניור",
+      "company": null,
+      "location": "הרצליה",
+      "remote": false,
+      "skills": ["Node.js", "TypeScript", "AWS"],
+      "salary": null,
+      "contact": "careers@finstart.co.il"
+    }
+  },
+  {
+    "id": "job_3_remote",
+    "is_job_post": true,
+    "text": "Fully remote Python developer role at DataCo (US-based, hires globally). Django + Celery + Postgres. $120-150k. Apply: https://dataco.com/careers/python-dev",
+    "expected": {
+      "title": "Python developer",
+      "company": "DataCo",
+      "location": null,
+      "remote": true,
+      "skills": ["Python", "Django", "Celery", "Postgres"],
+      "salary": "$120-150k",
+      "contact": "https://dataco.com/careers/python-dev"
+    }
+  },
+  {
+    "id": "not_job_1",
+    "is_job_post": false,
+    "text": "Has anyone tried the new MacBook M4? I'm thinking of upgrading from my M1.",
+    "expected": null
+  },
+  {
+    "id": "not_job_2",
+    "is_job_post": false,
+    "text": "Looking for a job — backend engineer, 5 years Python. Open to remote roles. DM me if you have leads!",
+    "expected": null
+  },
+  {
+    "id": "not_job_3",
+    "is_job_post": false,
+    "text": "Great article on rust vs go for backend services: https://example.com/rust-vs-go",
+    "expected": null
+  },
+  {
+    "id": "job_4_filtered_internship",
+    "is_job_post": true,
+    "text": "Unpaid internship for a CS student — backend Python, learn from senior engineers. Tel Aviv office. DM for details.",
+    "expected": {
+      "title": "Backend Python Internship",
+      "company": null,
+      "location": "Tel Aviv",
+      "remote": false,
+      "skills": ["Python"],
+      "salary": null,
+      "contact": "DM"
+    }
+  }
+]

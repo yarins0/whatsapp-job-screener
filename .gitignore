@@ -1,0 +1,32 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+listener/.wwebjs_auth/
+listener/.wwebjs_cache/
+.wwebjs_cache/
+
+# Database
+db/*.db
+db/*.db-journal
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
