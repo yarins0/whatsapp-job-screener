@@ -29,6 +29,7 @@ WhatsApp Groups
 ┌─────────────────────┐
 │  Listener Layer     │  whatsapp-web.js (Node.js)
 │  (listener.js)      │  Connects via QR, watches named groups
+│                     │  Replays missed messages on reconnect
 └────────┬────────────┘
          │ HTTP POST (raw message JSON)
          ▼
@@ -53,11 +54,13 @@ WhatsApp Groups
 │  4. Filter tool       →  match USER_PREFS        │
 │                                                  │
 │  5. Store tool        →  insert into jobs.db     │
+│                                                  │
+│  6. Telegram notify   →  instant alert per job   │
 └────────┬────────────────────────────────────────┘
          │
          ▼
 ┌─────────────────────┐
-│  Digest Scheduler   │  APScheduler cron @ 8am
+│  Digest Scheduler   │  APScheduler cron (daily)
 │  (digest/digest.py) │  Formats unseen jobs, sends
 │                     │  via Telegram (or stdout)
 └─────────────────────┘
@@ -98,10 +101,8 @@ copy .env.example .env
 # 4. Initialize the database
 python -m db.init_db
 
-# 5. Run the pieces (each in its own terminal)
-uvicorn api.main:app --reload --port 8000   # FastAPI ingest
-python -m digest.digest                      # Daily digest scheduler
-node listener/listener.js                    # WhatsApp listener (scan QR)
+# 5. Start everything
+python start.py
 ```
 
 ---
@@ -112,7 +113,7 @@ node listener/listener.js                    # WhatsApp listener (scan QR)
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Yes (live only) | Claude API access |
 | `JOBS_DB_PATH` | No | Override DB path (defaults to `db/jobs.db`) |
-| `WATCHED_GROUPS` | No | Comma-separated WhatsApp group names (e.g. `"Jobs IL,Tech Jobs TLV"`) |
+| `WATCHED_GROUPS` | No | Comma-separated WhatsApp group IDs (e.g. `"120363XXX@g.us,120363YYY@g.us"`) — run the listener once with this empty to print all group IDs |
 | `TELEGRAM_BOT_TOKEN` | No | Digest delivery via Telegram |
 | `TELEGRAM_CHAT_ID` | No | Telegram recipient chat ID |
 | `LANGCHAIN_API_KEY` | No | LangSmith tracing |
@@ -126,37 +127,36 @@ Edit `agent/memory.py` → `USER_PREFS`:
 
 ```python
 USER_PREFS = {
-    "roles": ["backend", "python", "node", "fullstack", "senior"],
-    "blocklist": ["unpaid", "volunteer", "internship"],
-    "locations": ["tel aviv", "remote", "tlv", "herzliya"],
+    "roles": ["backend", "python", "node", "fullstack", "junior"],
+    "blocklist": ["unpaid", "volunteer", "senior", "sales", "qa"],
+    "location_blocklist": ["jerusalem", "haifa"],
     "min_salary": None,
 }
 ```
 
 - `roles` — title/summary must contain at least one keyword to be kept
-- `blocklist` — any match auto-rejects the post
-- `locations` — job must be remote or match a location keyword
+- `blocklist` — any match auto-rejects the post (matched on title, summary, and skills)
+- `location_blocklist` — cities to reject; everything else passes (remote jobs always pass)
 
-Edit `WATCHED_GROUPS` in `listener/listener.js` (or set the env var) to the actual WhatsApp group names on your phone.
+Set `WATCHED_GROUPS` in `.env` to your group IDs. Run the listener once with it empty to discover them.
 
 ---
 
 ## Tests
 
-All 20 tests run offline — no API key needed. The LLM is replaced with `FakeListChatModel` using scripted JSON responses.
+**Python (22 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` using scripted JSON responses.
 
 ```bash
-# Run all tests
-pytest tests/ -v
+pytest tests/ -v                                              # all tests
+pytest tests/test_pipeline.py -v                             # single file
+pytest tests/test_pipeline.py::test_stores_a_qualified_job   # single test
+python -m agent.pipeline                                      # live smoke test (needs API key)
+```
 
-# Run a single file
-pytest tests/test_pipeline.py -v
+**Node.js (7 tests)** — Jest tests for the last-seen state module used by the catch-up mechanism.
 
-# Run a single test
-pytest tests/test_pipeline.py::test_stores_a_qualified_job -v
-
-# Live smoke test (requires ANTHROPIC_API_KEY)
-python -m agent.pipeline
+```bash
+npm test
 ```
 
 ---
@@ -209,4 +209,3 @@ tests/
 - **Feedback loop** — thumbs-up/down on digest items to refine `USER_PREFS` automatically
 - **Additional sources** — `langchain_community.document_loaders` for Telegram channels or LinkedIn
 - **Browse jobs CLI** — `python -m agent.list_jobs` to review stored jobs from the terminal
-# whatsapp-job-screener

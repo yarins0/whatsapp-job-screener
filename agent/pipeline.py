@@ -57,6 +57,7 @@ async def run_pipeline(
     message: dict,
     *,
     llm: Optional[BaseLanguageModel] = None,
+    notify: bool = True,
 ) -> dict[str, Any]:
     """Run a single message through the full screening pipeline.
 
@@ -91,8 +92,9 @@ async def run_pipeline(
         return PipelineResult("skipped", reason="duplicate", job=job).to_dict()
 
     # 4. Filter
-    if not filter_job(job):
-        return PipelineResult("skipped", reason="does not match preferences", job=job).to_dict()
+    passed, filter_reason = filter_job(job)
+    if not passed:
+        return PipelineResult("skipped", reason=filter_reason, job=job).to_dict()
 
     # 5. Store
     enriched = {
@@ -104,7 +106,8 @@ async def run_pipeline(
     logger.info("Stored job id=%s title=%r", job_id, job.get("title"))
 
     # 6. Notify immediately via Telegram so good jobs aren't missed until 8am
-    _notify_job(job)
+    if notify:
+        _notify_job(job)
 
     return PipelineResult("stored", job=job, job_id=job_id).to_dict()
 
@@ -145,7 +148,7 @@ if __name__ == "__main__":  # pragma: no cover
         "group": "Tech Jobs TLV",
         "sender": "demo",
         "text": (
-            "Hiring a Senior Backend Engineer at Acme — Python/FastAPI, Tel Aviv (hybrid). "
+            "Hiring a Backend Engineer at Acme — Python/FastAPI, Tel Aviv (hybrid). "
             "Stock options + competitive salary. DM @recruiter or email jobs@acme.io"
         ),
         "timestamp": 1700000000,
@@ -158,7 +161,7 @@ if __name__ == "__main__":  # pragma: no cover
 
         print("Running smoke test — sending a sample message through the pipeline...")
         try:
-            result = asyncio.run(run_pipeline(sample))
+            result = asyncio.run(run_pipeline(sample, notify=False))
             print(json.dumps(result, indent=2, ensure_ascii=False))
         except Exception as error:
             print(f"Error: {error}")

@@ -18,6 +18,7 @@ node_modules/
 listener/.wwebjs_auth/
 listener/.wwebjs_cache/
 .wwebjs_cache/
+listener/.last_seen.json
 
 # Database
 db/*.db
@@ -30,3 +31,4 @@ db/*.db-journal
 
 # Claude Code
 .claude/
+CLAUDE.md

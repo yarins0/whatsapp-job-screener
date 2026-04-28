@@ -77,7 +77,7 @@ async def test_skips_unwanted_role(temp_db):
     result = await run_pipeline(msg, llm=_llm(classification, extraction))
 
     assert result["action"] == "skipped"
-    assert result["reason"] == "does not match preferences"
+    assert result["reason"] == "no role keyword matched"
 
 
 @pytest.mark.asyncio

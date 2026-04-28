@@ -32,11 +32,9 @@ def is_duplicate(job: dict) -> bool:
     conn = sqlite3.connect(db)
     try:
         cur = conn.cursor()
-        cur.execute("SELECT 1 FROM seen_hashes WHERE hash = ?", (hash_val,))
-        exists = cur.fetchone() is not None
-        if not exists:
-            cur.execute("INSERT INTO seen_hashes (hash) VALUES (?)", (hash_val,))
-            conn.commit()
-        return exists
+        # INSERT OR IGNORE is atomic — eliminates the SELECT+INSERT race condition.
+        cur.execute("INSERT OR IGNORE INTO seen_hashes (hash) VALUES (?)", (hash_val,))
+        conn.commit()
+        return cur.rowcount == 0  # 0 rows inserted → already existed → duplicate
     finally:
         conn.close()

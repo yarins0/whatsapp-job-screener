@@ -21,34 +21,42 @@ def _job(**overrides) -> dict:
 
 
 def test_keeps_matching_role_and_location():
-    assert filter_job(_job()) is True
+    passed, reason = filter_job(_job())
+    assert passed is True
+    assert reason == ""
 
 
 def test_keeps_remote_even_if_location_unknown():
-    assert filter_job(_job(location=None, remote=True)) is True
+    passed, _ = filter_job(_job(location=None, remote=True))
+    assert passed is True
 
 
 def test_rejects_blocklisted_keyword():
-    assert filter_job(_job(title="Backend Internship", summary="unpaid internship")) is False
+    passed, reason = filter_job(_job(title="Backend Internship", summary="unpaid internship"))
+    assert passed is False
+    assert "unpaid" in reason
 
 
 def test_rejects_when_no_role_keyword_matches():
-    assert filter_job(_job(title="Marketing manager", summary="Marketing role.", skills=[])) is False
+    passed, reason = filter_job(_job(title="Marketing manager", summary="Marketing role.", skills=[]))
+    assert passed is False
+    assert "role keyword" in reason
 
 
 def test_rejects_blocked_city():
-    # Jerusalem is in the location_blocklist — should be filtered out
-    assert filter_job(_job(location="Jerusalem", remote=False)) is False
+    passed, reason = filter_job(_job(location="Jerusalem", remote=False))
+    assert passed is False
+    assert "Jerusalem" in reason
 
 
 def test_keeps_unknown_city():
-    # Berlin is not in the location_blocklist — accepted by default
-    assert filter_job(_job(location="Berlin", remote=False)) is True
+    passed, _ = filter_job(_job(location="Berlin", remote=False))
+    assert passed is True
 
 
 def test_remote_overrides_blocked_city():
-    # Remote jobs pass even if the listed location would otherwise be blocked
-    assert filter_job(_job(location="Jerusalem", remote=True)) is True
+    passed, _ = filter_job(_job(location="Jerusalem", remote=True))
+    assert passed is True
 
 
 def test_custom_prefs_override_defaults():
@@ -58,6 +66,10 @@ def test_custom_prefs_override_defaults():
         "location_blocklist": ["berlin"],
         "min_salary": None,
     }
-    assert filter_job(_job(title="Data engineer", location="Tel Aviv"), prefs) is True
-    assert filter_job(_job(title="Data engineer", location="Berlin"), prefs) is False
-    assert filter_job(_job(title="Backend engineer", location="Tel Aviv"), prefs) is False
+    passed, _ = filter_job(_job(title="Data engineer", location="Tel Aviv"), prefs)
+    assert passed is True
+    passed, reason = filter_job(_job(title="Data engineer", location="Berlin"), prefs)
+    assert passed is False
+    assert "berlin" in reason.lower()
+    passed, _ = filter_job(_job(title="Backend engineer", location="Tel Aviv"), prefs)
+    assert passed is False

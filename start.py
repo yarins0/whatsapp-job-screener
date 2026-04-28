@@ -51,9 +51,13 @@ def main() -> None:
     print("[start] All processes running. Press Ctrl+C to stop.\n")
 
     try:
-        # Wait until any process exits unexpectedly
-        for proc in procs:
-            proc.wait()
+        # Poll until any process exits unexpectedly, then shut everything down.
+        while True:
+            for proc, (label, _) in zip(procs, processes):
+                if proc.poll() is not None:
+                    print(f"\n[start] '{label}' exited with code {proc.returncode}. Shutting down...")
+                    raise SystemExit(1)
+            threading.Event().wait(timeout=2)
     except KeyboardInterrupt:
         print("\n[start] Shutting down...")
     finally:

@@ -34,7 +34,7 @@ def store_job(job: dict) -> int:
                 job.get("title"),
                 job.get("company"),
                 job.get("location"),
-                bool(job.get("remote")) if job.get("remote") is not None else None,
+                job.get("remote"),
                 json.dumps(job.get("skills") or []),
                 job.get("salary"),
                 job.get("contact"),
