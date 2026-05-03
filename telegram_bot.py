@@ -99,8 +99,20 @@ def _handle_callback(query: dict) -> None:
 
 
 def _handle_message(msg: dict) -> None:
-    """Process a text command sent to the bot."""
-    from agent.tools.prefs_tool import load_prefs
+    """Process a text command sent to the bot.
+
+    Supported commands:
+      /prefs                — show current roles, blocklist, and blocked cities
+      /blockrole <keyword>  — add a keyword to the role blocklist
+      /blockcity <city>     — add a city to the location blocklist
+      /addrole <keyword>    — add a keyword to the roles allow-list
+    """
+    from agent.tools.prefs_tool import (
+        add_to_blocklist,
+        add_to_location_blocklist,
+        add_to_roles,
+        load_prefs,
+    )
 
     text: str = (msg.get("text") or "").strip()
     chat_id: int = msg["chat"]["id"]
@@ -120,6 +132,30 @@ def _handle_message(msg: dict) -> None:
         except Exception as exc:
             reply = f"Could not read preferences: {exc}"
         _send(chat_id, reply)
+
+    elif text.startswith("/blockrole"):
+        keyword = text[len("/blockrole"):].strip()
+        if not keyword:
+            _send(chat_id, "Usage: /blockrole <keyword>")
+            return
+        added = add_to_blocklist(keyword)
+        _send(chat_id, f"Blocked: '{keyword.lower()}'" if added else f"'{keyword.lower()}' was already blocked.")
+
+    elif text.startswith("/blockcity"):
+        city = text[len("/blockcity"):].strip()
+        if not city:
+            _send(chat_id, "Usage: /blockcity <city>")
+            return
+        added = add_to_location_blocklist(city)
+        _send(chat_id, f"Blocked city: '{city}'" if added else f"'{city}' was already blocked.")
+
+    elif text.startswith("/addrole"):
+        keyword = text[len("/addrole"):].strip()
+        if not keyword:
+            _send(chat_id, "Usage: /addrole <keyword>")
+            return
+        added = add_to_roles(keyword)
+        _send(chat_id, f"Added role: '{keyword.lower()}'" if added else f"'{keyword.lower()}' is already in your roles list.")
 
 
 # ---------------------------------------------------------------------------
