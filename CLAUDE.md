@@ -43,10 +43,17 @@ WhatsApp (Node.js listener) → POST /ingest (FastAPI) → run_pipeline() → SQ
 
 ### Core flow: `agent/pipeline.py`
 
-`run_pipeline(message)` is the main entry point. It is `async` and accepts an optional `llm` override (used by tests) and `notify=False` (used by the smoke test to suppress Telegram). The pipeline runs 6 sequential steps:
+`run_pipeline(message)` is the main entry point. It is `async` and accepts an optional `llm` override (used by tests) and `notify=False` (used by the smoke test to suppress Telegram).
 
-1. **Classifier** (`agent/chains/classifier.py`) — LCEL chain (`prompt | llm | parser`). Returns `{is_job_post, confidence}`. Jobs with `confidence < 0.6` are dropped.
-2. **Extractor** (`agent/chains/extractor.py`) — LCEL chain. Returns a `JobPost` dict with title, company, location, skills, etc.
+**Adaptive mode selection:** Before classifying, the pipeline calls `get_pipeline_mode(group)` from `agent/tools/stats_tool.py`. Once a group has ≥50 messages and ≥70% are job posts, the mode switches to `"combined"`. Otherwise it uses `"separate"` (the default).
+
+- **Separate mode** — two LLM calls: classifier first, then extractor only if it passes.
+- **Combined mode** — one LLM call: `agent/chains/combined.py` classifies and extracts simultaneously, returning `{is_job_post, confidence, jobs: [...]}`.
+
+In both modes, after classification, stats are recorded via `record_message(group, is_job_post)`.
+
+A message may contain multiple job posts. The extractor returns a list; steps 3–6 run as a loop over every job:
+
 3. **Dedup** (`agent/tools/dedup_tool.py`) — atomic `INSERT OR IGNORE` on `seen_hashes` table.
 4. **Filter** (`agent/tools/filter_tool.py`) — matches against `USER_PREFS` in `agent/memory.py`. Returns `(passed, reason)`.
 5. **Store** (`agent/tools/store_tool.py`) — inserts into `jobs` table, returns the new row `id`.
@@ -62,9 +69,12 @@ On `ready`, the listener calls `catchUp()` for each watched group — fetching t
 
 - **Pipeline is `async/await`, not one LCEL chain** — easier to mock per-step in tests and trace in LangSmith.
 - **`llm` is injected** — `_default_llm()` lazy-imports `langchain_anthropic` so tests run offline with `FakeListChatModel`.
-- **`JOBS_DB_PATH` env var** — all three DB modules (`dedup_tool`, `store_tool`, `init_db`) read this env var; the `temp_db` pytest fixture sets it to a `tmp_path` file, isolating test state.
+- **`JOBS_DB_PATH` env var** — all DB modules (`dedup_tool`, `store_tool`, `stats_tool`, `init_db`) read this env var; the `temp_db` pytest fixture sets it to a `tmp_path` file, isolating test state.
 - **Dedup is atomic** — `INSERT OR IGNORE` + `rowcount` check eliminates the SELECT+INSERT race condition.
 - **Filter returns `(passed, reason)`** — the rejection reason propagates to the API log and the pipeline result.
+- **Extractor returns a list** — the LLM may return one job or several for a message with multiple postings; the pipeline normalises to a list and processes each job independently.
+- **Stats are advisory** — `stats_tool` errors are caught and logged as warnings; they never interrupt the pipeline.
+- **Combined mode fallback** — if the combined chain fails (e.g. parse error), the pipeline falls back to separate mode automatically.
 - **Model** — `claude-haiku-4-5-20251001` in production (cheap, fast).
 
 ### User preferences
@@ -73,15 +83,23 @@ Edit `agent/memory.py` → `USER_PREFS` dict to change which jobs are kept. Fiel
 
 ### Database
 
-`db/schema.sql` defines two tables: `jobs` and `seen_hashes`. Initialize with `python -m db.init_db`. The `jobs.seen` column is flipped to `1` after the digest runs.
+`db/schema.sql` defines three tables:
+- `jobs` — stored job posts; `seen` column flipped to `1` after the digest runs.
+- `seen_hashes` — MD5 hashes of `title+company+contact` for dedup.
+- `group_stats` — cumulative `total_messages` / `job_post_messages` per group; drives adaptive mode selection.
+
+Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXISTS` so re-running is safe.
 
 ### Tests
 
-**Python (22 tests)** — all run offline. `conftest.py` provides:
-- `temp_db` — creates a fresh isolated DB and sets `JOBS_DB_PATH`
+**Python (39 tests)** — all run offline. `conftest.py` provides:
+- `temp_db` — creates a fresh isolated DB (all three tables) and sets `JOBS_DB_PATH`
 - `sample_messages` — loads `tests/sample_messages.json`
 
-Pipeline tests pass scripted JSON strings to `FakeListChatModel` to simulate classifier and extractor responses in sequence.
+Key test patterns:
+- Pipeline tests pass scripted JSON to `FakeListChatModel`; separate mode needs two responses (classify, then extract); combined mode needs one combined response.
+- To force combined mode in a pipeline test, insert a row into `group_stats` with `total_messages=100, job_post_messages=95` before calling `run_pipeline`.
+- Stats tool tests use `monkeypatch.setenv("JOBS_DB_PATH", ...)` directly, bypassing the `temp_db` fixture where needed.
 
 **Node.js (7 tests)** — Jest tests for `listener/last_seen.js`. Each test uses a unique tmp file path so tests never touch the real state file.
 

@@ -44,19 +44,16 @@ WhatsApp Groups
 │              LangChain Pipeline                  │
 │              (agent/pipeline.py)                 │
 │                                                  │
-│  1. Classifier chain  →  is_job_post + confidence│
-│     (drops if confidence < 0.6)                  │
+│  Adaptive mode (per group, auto-selected):       │
+│  • separate  — classify then extract (2 calls)   │
+│  • combined  — classify+extract in 1 call        │
+│    (auto-switches when group ≥70% job posts)     │
 │                                                  │
-│  2. Extractor chain   →  title, company,         │
-│     location, skills, salary, remote, contact    │
-│                                                  │
-│  3. Dedup tool        →  hash check (SQLite)     │
-│                                                  │
-│  4. Filter tool       →  match USER_PREFS        │
-│                                                  │
-│  5. Store tool        →  insert into jobs.db     │
-│                                                  │
-│  6. Telegram notify   →  instant alert per job   │
+│  Per extracted job (supports multi-job messages):│
+│  3. Dedup tool  →  hash check (SQLite)           │
+│  4. Filter tool →  match USER_PREFS              │
+│  5. Store tool  →  insert into jobs.db           │
+│  6. Notify      →  instant Telegram alert        │
 └────────┬────────────────────────────────────────┘
          │
          ▼
@@ -77,7 +74,7 @@ WhatsApp Groups
 | API / ingest | Python + FastAPI |
 | LLM framework | LangChain (Python) |
 | LLM model | `claude-haiku-4-5-20251001` via `langchain-anthropic` |
-| Database | SQLite (two tables: `jobs`, `seen_hashes`) |
+| Database | SQLite (three tables: `jobs`, `seen_hashes`, `group_stats`) |
 | Scheduler | APScheduler |
 | Notifications | Telegram Bot API (falls back to stdout) |
 | Observability | LangSmith (free tier) |
@@ -213,9 +210,13 @@ Press `Ctrl+C` to stop everything cleanly. If the listener crashes and restarts 
 Every WhatsApp message in a watched group is sent to the pipeline:
 
 1. **Not a job post?** → dropped silently
-2. **Already seen?** → dropped (dedup)
+2. **Already seen?** → dropped (dedup) — each job in a multi-job message is deduped independently
 3. **Doesn't match your preferences?** → dropped (logged with reason)
 4. **Passes everything?** → stored in `db/jobs.db` + instant Telegram alert (if configured)
+
+A message can contain multiple job posts — each is processed independently through steps 2–4.
+
+The pipeline tracks per-group job-post rates automatically. Once a group reaches 50 messages and ≥70% are job posts, it switches to a single combined LLM call instead of two separate calls, reducing API cost roughly by half for dedicated job groups.
 
 The daily digest fires each morning and summarises everything stored since the last digest.
 
@@ -223,7 +224,7 @@ The daily digest fires each morning and summarises everything stored since the l
 
 ## Tests
 
-**Python (22 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` using scripted JSON responses.
+**Python (39 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` using scripted JSON responses.
 
 ```bash
 pytest tests/ -v                                              # all tests
@@ -252,12 +253,14 @@ Set `LANGCHAIN_TRACING_V2=true` and `LANGCHAIN_API_KEY` in `.env`. Every chain i
 agent/
   pipeline.py        Main async orchestrator — start reading here
   chains/
-    classifier.py    LCEL chain: is_job_post + confidence
-    extractor.py     LCEL chain: structured JobPost fields
+    classifier.py    LCEL chain: is_job_post + confidence (separate mode)
+    extractor.py     LCEL chain: list of JobPost dicts (separate mode)
+    combined.py      LCEL chain: classify+extract in one call (combined mode)
   tools/
     filter_tool.py   Match job against USER_PREFS
     dedup_tool.py    Hash-based dedup via seen_hashes table
     store_tool.py    Insert job into jobs table
+    stats_tool.py    Per-group job-post rate tracking; drives adaptive mode
   memory.py          USER_PREFS dict (edit this)
 
 api/
@@ -271,7 +274,7 @@ digest/
   digest.py          APScheduler cron + format_digest() (pure, testable)
 
 db/
-  schema.sql         SQLite schema (jobs + seen_hashes)
+  schema.sql         SQLite schema (jobs, seen_hashes, group_stats)
   init_db.py         python -m db.init_db
 
 tests/
