@@ -153,7 +153,7 @@ async def run_pipeline(
 
         # 6. Notify immediately so good jobs aren't missed until the digest
         if notify:
-            _notify_job(job)
+            _notify_job(job, job_id)
 
     if not stored_jobs:
         # All jobs in this message were skipped — report the first reason
@@ -176,14 +176,20 @@ async def run_pipeline(
     ).to_dict()
 
 
-def _notify_job(job: dict) -> None:
-    """Send a single-job Telegram notification. Fails silently if not configured."""
+def _notify_job(job: dict, job_id: int) -> None:
+    """Send a single-job Telegram notification with feedback buttons.
+
+    Attaches two inline buttons so the user can immediately block the role
+    keyword or the city without leaving Telegram. Fails silently if Telegram
+    is not configured.
+    """
     try:
         from digest.digest import _send_telegram  # noqa: WPS433
 
         title = job.get("title") or "Untitled role"
         company = job.get("company") or "Unknown company"
-        loc = "Remote" if job.get("remote") else (job.get("location") or "Unknown")
+        is_remote = bool(job.get("remote"))
+        loc = "Remote" if is_remote else (job.get("location") or "Unknown")
         summary = job.get("summary") or ""
         contact = job.get("contact") or "see original message"
 
@@ -192,7 +198,21 @@ def _notify_job(job: dict) -> None:
             lines.append(summary)
         lines.append(f"Contact: {contact}")
 
-        _send_telegram("\n".join(lines))
+        # Callback data is limited to 64 bytes by the Telegram API.
+        # Format: "<action>:<job_id>:<value>"
+        role_kw = title.lower()[:40]
+        buttons = [
+            {"text": "Block role", "callback_data": f"block_role:{job_id}:{role_kw}"},
+        ]
+        # Only offer "Block city" when a specific city is known (remote jobs have no city to block).
+        city = (job.get("location") or "").strip()
+        if city and not is_remote:
+            buttons.append(
+                {"text": f"Block city: {city[:15]}", "callback_data": f"block_city:{job_id}:{city[:30]}"}
+            )
+
+        reply_markup = {"inline_keyboard": [buttons]}
+        _send_telegram("\n".join(lines), reply_markup=reply_markup)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Real-time Telegram notification failed: %s", exc)
 

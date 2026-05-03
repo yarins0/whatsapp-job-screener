@@ -1,0 +1,41 @@
+{
+  "roles": [
+    "backend",
+    "back-end",
+    "fullstack",
+    "full-stack",
+    "full stack",
+    "software engineer",
+    "software developer",
+    "python",
+    "node.js",
+    "nodejs",
+    "react",
+    "junior",
+    "junior developer",
+    "junior engineer"
+  ],
+  "blocklist": [
+    "unpaid",
+    "volunteer",
+    "senior",
+    "sales",
+    "qa",
+    "student",
+    "bookkeeper",
+    "hardware",
+    "marketing",
+    "firmware",
+    "embedded",
+    "electrical"
+  ],
+  "location_blocklist": [
+    "Jerusalem",
+    "Haifa",
+    "Yokneam",
+    "Kiryat Shmona",
+    "North Israel",
+    "Kiryat Motzkin"
+  ],
+  "min_salary": null
+}
