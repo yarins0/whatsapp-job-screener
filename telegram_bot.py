@@ -117,7 +117,17 @@ def _handle_message(msg: dict) -> None:
     text: str = (msg.get("text") or "").strip()
     chat_id: int = msg["chat"]["id"]
 
-    if text.startswith("/start") or text.startswith("/commands"):
+    if text.startswith("/help"):
+        _send(chat_id, (
+            "This bot screens WhatsApp job groups and forwards relevant postings to you.\n\n"
+            "When a new job is stored you'll get an instant notification with two buttons:\n"
+            "  • Block role — never see this type of job again\n"
+            "  • Block city — skip jobs in that city\n\n"
+            "You can also manage your preferences any time using text commands.\n\n"
+            "For a full list of commands, use /commands."
+        ))
+
+    elif text.startswith("/start") or text.startswith("/commands"):
         _send(chat_id, (
             "Job Screener Bot — available commands:\n\n"
             "/prefs — show current roles, blocklist, and blocked cities\n"

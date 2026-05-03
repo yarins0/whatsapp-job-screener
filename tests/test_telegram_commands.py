@@ -127,6 +127,31 @@ def test_addrole_reports_duplicate(temp_prefs):
 
 
 # ---------------------------------------------------------------------------
+# /help
+# ---------------------------------------------------------------------------
+
+def test_help_mentions_commands(temp_prefs):
+    from telegram_bot import _handle_message
+
+    with patch("telegram_bot._send") as mock_send:
+        _handle_message(_make_msg("/help"))
+
+    reply = mock_send.call_args[0][1]
+    assert "/commands" in reply
+
+
+def test_help_mentions_buttons(temp_prefs):
+    from telegram_bot import _handle_message
+
+    with patch("telegram_bot._send") as mock_send:
+        _handle_message(_make_msg("/help"))
+
+    reply = mock_send.call_args[0][1]
+    assert "Block role" in reply
+    assert "Block city" in reply
+
+
+# ---------------------------------------------------------------------------
 # /start and /commands
 # ---------------------------------------------------------------------------
 
