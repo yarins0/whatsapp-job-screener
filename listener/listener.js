@@ -26,6 +26,7 @@ const lastSeen = require('./last_seen');
 // Edit the file directly, or use the /addgroup and /removegroup Telegram commands.
 // Run the listener once with an empty array to discover and print all group IDs.
 const GROUPS_FILE = path.join(__dirname, '..', 'agent', 'groups.json');
+const GROUP_NAMES_FILE = path.join(__dirname, '..', 'agent', 'group_names.json');
 
 function loadGroups() {
   try {
@@ -35,6 +36,32 @@ function loadGroups() {
   } catch (err) {
     console.warn('[groups] Could not read groups.json:', err.message);
     return [];
+  }
+}
+
+// Resolve the display name of each watched group and persist to group_names.json
+// so the Telegram bot can show human-readable names alongside group IDs.
+// Merges with any existing cache so names from previous sessions are preserved
+// if a group temporarily fails to load.
+async function saveGroupNames(groupIds) {
+  let cached = {};
+  try {
+    cached = JSON.parse(fs.readFileSync(GROUP_NAMES_FILE, 'utf8'));
+  } catch (_) { /* start fresh if file is missing or corrupt */ }
+
+  for (const groupId of groupIds) {
+    try {
+      const chat = await client.getChatById(groupId);
+      cached[groupId] = chat.name;
+    } catch (err) {
+      console.warn(`[groups] Could not resolve name for ${groupId}:`, err.message);
+    }
+  }
+
+  try {
+    fs.writeFileSync(GROUP_NAMES_FILE, JSON.stringify(cached, null, 2));
+  } catch (err) {
+    console.warn('[groups] Could not write group_names.json:', err.message);
   }
 }
 
@@ -190,6 +217,10 @@ client.on('ready', async () => {
   }
 
   console.log(`\nConnected. Watching ${watchedGroups.length} group(s). Checking for missed messages...\n`);
+
+  // Cache group display names so the Telegram bot can show them in /groups.
+  await saveGroupNames(watchedGroups);
+
   // Snapshot timestamps before the loop so that live messages arriving during
   // catch-up can't advance a group's cursor and cause older messages to be missed.
   const snapshot = lastSeen.load();

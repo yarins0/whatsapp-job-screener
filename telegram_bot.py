@@ -183,16 +183,22 @@ def _handle_message(msg: dict) -> None:
         _send(chat_id, f"Added role: '{keyword.lower()}'" if added else f"'{keyword.lower()}' is already in your roles list.")
 
     elif text.startswith("/groups"):
-        from agent.tools.groups_tool import load_groups
+        from agent.tools.groups_tool import load_group_names, load_groups
         try:
             groups = load_groups()
+            names = load_group_names()
             if groups:
-                lines = ["Watched groups:"] + [f"  {g}" for g in groups]
+                lines = ["Watched groups:"]
+                for gid in groups:
+                    name = names.get(gid, "unknown")
+                    lines.append(f"  {name}  ({gid})")
+                lines.append("")
+                lines.append("Names refresh when the listener restarts.")
             else:
                 lines = [
                     "No groups are being watched yet.",
-                    "Use /addgroup <id> to add one.",
-                    "Run the listener once with an empty list to discover group IDs.",
+                    "Use /addgroup <group_id> to add one.",
+                    "Restart the listener with an empty list to discover group IDs.",
                 ]
             _send(chat_id, "\n".join(lines))
         except Exception as exc:
@@ -202,7 +208,13 @@ def _handle_message(msg: dict) -> None:
         from agent.tools.groups_tool import add_group
         group_id = text[len("/addgroup"):].strip()
         if not group_id:
-            _send(chat_id, "Usage: /addgroup <group_id>\nExample: /addgroup 120363XXXXXXXXXX@g.us")
+            _send(chat_id, (
+                "Usage: /addgroup <group_id>\n\n"
+                "The group ID is the WhatsApp internal ID (not the group name), "
+                "e.g. 120363XXXXXXXXXX@g.us\n\n"
+                "To find IDs: empty agent/groups.json and restart the listener — "
+                "it will print all your groups and their IDs."
+            ))
             return
         added = add_group(group_id)
         if added:
@@ -218,7 +230,7 @@ def _handle_message(msg: dict) -> None:
         from agent.tools.groups_tool import remove_group
         group_id = text[len("/removegroup"):].strip()
         if not group_id:
-            _send(chat_id, "Usage: /removegroup <group_id>")
+            _send(chat_id, "Usage: /removegroup <group_id>\n\nUse /groups to see the IDs of currently watched groups.")
             return
         removed = remove_group(group_id)
         _send(chat_id, f"Removed group: {group_id}" if removed else f"'{group_id}' was not in the watch list.")

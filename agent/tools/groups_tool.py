@@ -71,3 +71,21 @@ def remove_group(group_id: str) -> bool:
         _save_groups(groups)
     logger.info("groups: removed '%s'", group_id)
     return True
+
+
+def _group_names_path() -> Path:
+    env = os.environ.get("GROUP_NAMES_PATH")
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parent.parent / "group_names.json"
+
+
+def load_group_names() -> dict[str, str]:
+    """Return the cached {group_id: display_name} mapping written by the listener."""
+    try:
+        with open(_group_names_path(), encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
