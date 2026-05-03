@@ -63,16 +63,16 @@ async def test_skips_non_job_post(temp_db):
 async def test_skips_unwanted_role(temp_db):
     classification = {"is_job_post": True, "confidence": 0.9}
     extraction = {
-        "title": "Marketing Manager",
+        "title": "Accountant",
         "company": "Acme",
         "location": "Tel Aviv",
         "remote": False,
         "skills": [],
         "salary": None,
         "contact": "jobs@acme.io",
-        "summary": "Marketing manager role.",
+        "summary": "Accounting role.",
     }
-    msg = {"group": "g", "sender": "s", "text": "Marketing manager wanted", "timestamp": 0}
+    msg = {"group": "g", "sender": "s", "text": "Accountant wanted", "timestamp": 0}
 
     result = await run_pipeline(msg, llm=_llm(classification, extraction))
 

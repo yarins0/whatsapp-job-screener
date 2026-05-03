@@ -25,7 +25,9 @@ USER_PREFS: UserPreferences = {
         "python", "node.js", "nodejs", "react",
         "junior", "junior developer", "junior engineer",
     ],
-    "blocklist": ["unpaid", "volunteer", "senior", "sales", "qa", "student"],
-    "location_blocklist": ["Jerusalem", "Haifa", "Yokneam"],
+    "blocklist": ["unpaid", "volunteer", "senior", "sales", "qa",
+                   "student", "bookkeeper", "hardware", "marketing",
+                   "firmware", "embedded", "electrical"],
+    "location_blocklist": ["Jerusalem", "Haifa", "Yokneam", "Kiryat Shmona", "North Israel", "Kiryat Motzkin"],
     "min_salary": None,
 }

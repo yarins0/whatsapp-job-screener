@@ -38,7 +38,7 @@ def test_rejects_blocklisted_keyword():
 
 
 def test_rejects_when_no_role_keyword_matches():
-    passed, reason = filter_job(_job(title="Marketing manager", summary="Marketing role.", skills=[]))
+    passed, reason = filter_job(_job(title="Accountant", summary="Accounting role.", skills=[]))
     assert passed is False
     assert "role keyword" in reason
 

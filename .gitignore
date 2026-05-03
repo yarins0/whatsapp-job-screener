@@ -31,4 +31,3 @@ db/*.db-journal
 
 # Claude Code
 .claude/
-CLAUDE.md

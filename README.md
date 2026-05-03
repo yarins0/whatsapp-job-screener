@@ -29,7 +29,8 @@ WhatsApp Groups
 ┌─────────────────────┐
 │  Listener Layer     │  whatsapp-web.js (Node.js)
 │  (listener.js)      │  Connects via QR, watches named groups
-│                     │  Replays missed messages on reconnect
+│                     │  Replays up to 48 h of missed messages on reconnect
+│                     │  Heartbeat detects silent disconnects after PC sleep
 └────────┬────────────┘
          │ HTTP POST (raw message JSON)
          ▼
@@ -83,62 +84,140 @@ WhatsApp Groups
 
 ---
 
-## Quick start
+## Setup guide
+
+### Prerequisites
+
+- **Python 3.10+** and **Node.js 18+**
+- A phone with WhatsApp installed (to scan the QR code on first run)
+- An [Anthropic API key](https://console.anthropic.com/) — the agent uses Claude Haiku, which is cheap (~$0.001 per message screened)
+- *(Optional)* A Telegram account for instant notifications and the daily digest
+
+---
+
+### Step 1 — Install dependencies
 
 ```bash
-# 1. Python environment
+# Clone the repo
+git clone <repo-url>
+cd job-screening-agent
+
+# Python environment
 python -m venv venv
-venv\Scripts\activate          # Mac/Linux: source venv/bin/activate
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # Mac / Linux
+
 pip install -r requirements.txt
 
-# 2. Node environment (only needed for the WhatsApp listener)
+# Node environment (for the WhatsApp listener)
 npm install
-
-# 3. Secrets
-copy .env.example .env
-# Fill in ANTHROPIC_API_KEY (and optionally LangSmith / Telegram keys)
-
-# 4. Initialize the database
-python -m db.init_db
-
-# 5. Start everything
-python start.py
 ```
 
 ---
 
-## Environment variables
+### Step 2 — Create your `.env`
 
-| Variable | Required | Purpose |
+```bash
+copy .env.example .env   # Windows
+# cp .env.example .env   # Mac / Linux
+```
+
+Open `.env` in any text editor. The only key you *must* fill in to get started is `ANTHROPIC_API_KEY`.
+
+| Variable | Required | How to get it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Yes (live only) | Claude API access |
-| `JOBS_DB_PATH` | No | Override DB path (defaults to `db/jobs.db`) |
-| `WATCHED_GROUPS` | No | Comma-separated WhatsApp group IDs (e.g. `"120363XXX@g.us,120363YYY@g.us"`) — run the listener once with this empty to print all group IDs |
-| `TELEGRAM_BOT_TOKEN` | No | Digest delivery via Telegram |
-| `TELEGRAM_CHAT_ID` | No | Telegram recipient chat ID |
-| `LANGCHAIN_API_KEY` | No | LangSmith tracing |
+| `ANTHROPIC_API_KEY` | **Yes** | [console.anthropic.com](https://console.anthropic.com/) → API Keys |
+| `WATCHED_GROUPS` | After step 4 | Comma-separated group IDs — discovered in step 4 |
+| `TELEGRAM_BOT_TOKEN` | No | Chat with [@BotFather](https://t.me/BotFather) → `/newbot` |
+| `TELEGRAM_CHAT_ID` | No | Message your bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and find `"chat": {"id": ...}` |
+| `LANGCHAIN_API_KEY` | No | Free account at [smith.langchain.com](https://smith.langchain.com) |
 | `LANGCHAIN_TRACING_V2` | No | Set `true` to enable LangSmith tracing |
+| `LANGCHAIN_PROJECT` | No | Project name in LangSmith (defaults to `default` if omitted) |
 
 ---
 
-## Configuring your preferences
+### Step 3 — Configure your job preferences
 
-Edit `agent/memory.py` → `USER_PREFS`:
+Open `agent/memory.py` and edit `USER_PREFS` to match what you're looking for:
 
 ```python
 USER_PREFS = {
     "roles": ["backend", "python", "node", "fullstack", "junior"],
     "blocklist": ["unpaid", "volunteer", "senior", "sales", "qa"],
-    "location_blocklist": ["jerusalem", "haifa"],
+    "location_blocklist": ["Jerusalem", "Haifa"],
     "min_salary": None,
 }
 ```
 
-- `roles` — title/summary must contain at least one keyword to be kept
-- `blocklist` — any match auto-rejects the post (matched on title, summary, and skills)
-- `location_blocklist` — cities to reject; everything else passes (remote jobs always pass)
+| Field | Effect |
+|---|---|
+| `roles` | A job must contain at least one of these keywords (in title or summary) to be kept |
+| `blocklist` | Any post matching these words is auto-rejected (checked against title, summary, and skills) |
+| `location_blocklist` | Cities to skip. Everything else passes. Remote jobs always pass. |
 
-Set `WATCHED_GROUPS` in `.env` to your group IDs. Run the listener once with it empty to discover them.
+---
+
+### Step 4 — Discover your WhatsApp group IDs
+
+Leave `WATCHED_GROUPS` empty in `.env` for now and run:
+
+```bash
+python start.py
+```
+
+A QR code will appear in the terminal. **Scan it with WhatsApp** (Settings → Linked Devices → Link a Device). Once connected, the listener prints all your groups:
+
+```
+  120363XXXXXXXXXX@g.us  —  Tech Jobs TLV
+  120363YYYYYYYYYY@g.us  —  Junior Dev Positions
+```
+
+Copy the IDs of the groups you want to watch into `.env`:
+
+```
+WATCHED_GROUPS=120363XXXXXXXXXX@g.us,120363YYYYYYYYYY@g.us
+```
+
+Press `Ctrl+C` to stop. Auth is saved to `listener/.wwebjs_auth/` — you won't need to scan the QR code again unless you delete that folder or log out.
+
+---
+
+### Step 5 — Initialize the database
+
+```bash
+python -m db.init_db
+```
+
+---
+
+### Step 6 — Start the agent
+
+```bash
+python start.py
+```
+
+Three processes start together and log to the same terminal:
+
+| Prefix | Process | Role |
+|---|---|---|
+| `[api]` | FastAPI on port 8000 | Receives messages from the listener, runs the pipeline |
+| `[digest]` | APScheduler | Sends a Telegram summary digest each morning |
+| `[listener]` | whatsapp-web.js | Watches groups, replays missed messages on reconnect |
+
+Press `Ctrl+C` to stop everything cleanly. If the listener crashes and restarts automatically, that's normal — it recovers from WhatsApp disconnects on its own.
+
+---
+
+### What happens next
+
+Every WhatsApp message in a watched group is sent to the pipeline:
+
+1. **Not a job post?** → dropped silently
+2. **Already seen?** → dropped (dedup)
+3. **Doesn't match your preferences?** → dropped (logged with reason)
+4. **Passes everything?** → stored in `db/jobs.db` + instant Telegram alert (if configured)
+
+The daily digest fires each morning and summarises everything stored since the last digest.
 
 ---
 
@@ -153,7 +232,7 @@ pytest tests/test_pipeline.py::test_stores_a_qualified_job   # single test
 python -m agent.pipeline                                      # live smoke test (needs API key)
 ```
 
-**Node.js (7 tests)** — Jest tests for the last-seen state module used by the catch-up mechanism.
+**Node.js (7 tests)** — Jest tests for `listener/last_seen.js`, the per-group timestamp module used by the catch-up mechanism. Each test uses a unique tmp file path so tests never touch the real state file.
 
 ```bash
 npm test
@@ -185,7 +264,8 @@ api/
   main.py            FastAPI: POST /ingest, GET /healthz
 
 listener/
-  listener.js        whatsapp-web.js client; QR auth
+  listener.js        whatsapp-web.js client; QR auth, heartbeat reconnect, catch-up replay
+  last_seen.js       Per-group timestamp persistence (path-injectable for tests)
 
 digest/
   digest.py          APScheduler cron + format_digest() (pure, testable)
