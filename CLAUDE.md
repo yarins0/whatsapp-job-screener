@@ -55,31 +55,47 @@ In both modes, after classification, stats are recorded via `record_message(grou
 A message may contain multiple job posts. The extractor returns a list; steps 3–6 run as a loop over every job:
 
 3. **Dedup** (`agent/tools/dedup_tool.py`) — atomic `INSERT OR IGNORE` on `seen_hashes` table.
-4. **Filter** (`agent/tools/filter_tool.py`) — matches against `USER_PREFS` in `agent/memory.py`. Returns `(passed, reason)`.
+4. **Filter** (`agent/tools/filter_tool.py`) — calls `load_prefs()` from `agent/tools/prefs_tool.py` (reads `agent/prefs.json` on every call so Telegram-bot changes take effect immediately). Returns `(passed, reason)`.
 5. **Store** (`agent/tools/store_tool.py`) — inserts into `jobs` table, returns the new row `id`.
-6. **Notify** — sends an instant Telegram alert per stored job via `digest.digest._send_telegram`.
+6. **Notify** — sends an instant Telegram alert per stored job via `digest.digest._send_telegram`, with two inline buttons: **Block role** (adds lowercased title to blocklist) and **Block city** (only for non-remote jobs with a known location).
 
 ### Listener: `listener/listener.js`
 
-On `ready`, the listener calls `catchUp()` for each watched group — fetching the last 100 messages and replaying any newer than the timestamp stored in `listener/.last_seen.json`. This recovers missed messages after a computer sleep or disconnect. The timestamp is updated on every live message and after each catch-up.
+On `ready`, the listener reads watched group IDs from `agent/groups.json` (a `{id: name}` map), calls `saveGroupNames()` to resolve and cache display names back into the same file, then calls `catchUp()` for each group. The `message` event handler re-reads `groups.json` on every message so `/addgroup` and `/removegroup` take effect immediately without a restart.
 
 `listener/last_seen.js` — extracted state module (`load`, `save`, `update`). Accepts a custom file path, which is how Jest tests isolate state without touching the real file.
+
+### Telegram bot: `telegram_bot.py`
+
+Long-polls `getUpdates`. Handles inline-button callback queries (`block_role:`, `block_city:`) and text commands: `/help`, `/commands`, `/start`, `/prefs`, `/blockrole`, `/blockcity`, `/addrole`, `/groups`, `/addgroup`, `/removegroup`. All preference and group mutations delegate to `prefs_tool.py` and `groups_tool.py`.
 
 ### Key design decisions
 
 - **Pipeline is `async/await`, not one LCEL chain** — easier to mock per-step in tests and trace in LangSmith.
 - **`llm` is injected** — `_default_llm()` lazy-imports `langchain_anthropic` so tests run offline with `FakeListChatModel`.
 - **`JOBS_DB_PATH` env var** — all DB modules (`dedup_tool`, `store_tool`, `stats_tool`, `init_db`) read this env var; the `temp_db` pytest fixture sets it to a `tmp_path` file, isolating test state.
+- **`PREFS_PATH` env var** — `prefs_tool` reads this to locate `agent/prefs.json`; the `temp_prefs` fixture overrides it per test.
+- **`GROUPS_PATH` env var** — `groups_tool` reads this to locate `agent/groups.json`; the `temp_groups` fixture overrides it per test.
 - **Dedup is atomic** — `INSERT OR IGNORE` + `rowcount` check eliminates the SELECT+INSERT race condition.
+- **Filter reads prefs on every call** — `filter_tool` calls `load_prefs()` each time so Telegram-bot changes take effect on the next message without a restart.
 - **Filter returns `(passed, reason)`** — the rejection reason propagates to the API log and the pipeline result.
 - **Extractor returns a list** — the LLM may return one job or several for a message with multiple postings; the pipeline normalises to a list and processes each job independently.
 - **Stats are advisory** — `stats_tool` errors are caught and logged as warnings; they never interrupt the pipeline.
 - **Combined mode fallback** — if the combined chain fails (e.g. parse error), the pipeline falls back to separate mode automatically.
+- **Telegram bot uses long-polling** — no public URL or webhook required; works locally and on a remote server.
 - **Model** — `claude-haiku-4-5-20251001` in production (cheap, fast).
 
 ### User preferences
 
-Edit `agent/memory.py` → `USER_PREFS` dict to change which jobs are kept. Fields: `roles` (keyword allow-list on title+summary), `blocklist` (auto-reject keywords on title/summary/skills), `location_blocklist` (cities to reject — everything else passes, remote always passes).
+Edit `agent/prefs.json` directly, or use Telegram commands (`/blockrole`, `/blockcity`, `/addrole`). The filter reads the file on every call so changes take effect on the next incoming message without a restart.
+
+Fields: `roles` (keyword allow-list on title+summary), `blocklist` (auto-reject keywords on title/summary/skills), `location_blocklist` (cities to reject — everything else passes, remote always passes).
+
+`agent/memory.py` now only contains the `UserPreferences` TypedDict — it is no longer the source of truth for preferences.
+
+### Watched groups
+
+`agent/groups.json` — a `{group_id: display_name}` map. Add/remove entries directly or via `/addgroup` / `/removegroup` in Telegram. The listener re-reads this file on every message event so removals and additions of groups take effect immediately; catch-up replay for newly added groups happens on the next listener restart.
 
 ### Database
 
@@ -92,14 +108,17 @@ Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXIS
 
 ### Tests
 
-**Python (39 tests)** — all run offline. `conftest.py` provides:
+**Python (74 tests)** — all run offline. `conftest.py` provides:
 - `temp_db` — creates a fresh isolated DB (all three tables) and sets `JOBS_DB_PATH`
+- `temp_prefs` — writes a minimal `prefs.json` to a temp file and sets `PREFS_PATH`
+- `temp_groups` — writes an empty `groups.json` map to a temp file and sets `GROUPS_PATH`
 - `sample_messages` — loads `tests/sample_messages.json`
 
 Key test patterns:
 - Pipeline tests pass scripted JSON to `FakeListChatModel`; separate mode needs two responses (classify, then extract); combined mode needs one combined response.
 - To force combined mode in a pipeline test, insert a row into `group_stats` with `total_messages=100, job_post_messages=95` before calling `run_pipeline`.
 - Stats tool tests use `monkeypatch.setenv("JOBS_DB_PATH", ...)` directly, bypassing the `temp_db` fixture where needed.
+- Telegram bot command tests use `unittest.mock.patch("telegram_bot._send")` to capture replies without making real API calls.
 
 **Node.js (7 tests)** — Jest tests for `listener/last_seen.js`. Each test uses a unique tmp file path so tests never touch the real state file.
 
@@ -111,8 +130,9 @@ Copy `.env.example` to `.env` and fill in:
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Yes (live only) | Claude API access |
 | `JOBS_DB_PATH` | No | Override DB path (defaults to `db/jobs.db`) |
-| `WATCHED_GROUPS` | No | Comma-separated WhatsApp group IDs for listener |
-| `TELEGRAM_BOT_TOKEN` | No | Instant notifications + digest delivery |
+| `PREFS_PATH` | No | Override prefs file path (defaults to `agent/prefs.json`) |
+| `GROUPS_PATH` | No | Override groups file path (defaults to `agent/groups.json`) |
+| `TELEGRAM_BOT_TOKEN` | No | Instant notifications, digest delivery, and bot commands |
 | `TELEGRAM_CHAT_ID` | No | Telegram recipient |
 | `LANGCHAIN_API_KEY` | No | LangSmith tracing |
 | `LANGCHAIN_TRACING_V2` | No | Set to `true` to enable tracing |
