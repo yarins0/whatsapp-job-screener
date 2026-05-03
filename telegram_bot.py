@@ -183,15 +183,14 @@ def _handle_message(msg: dict) -> None:
         _send(chat_id, f"Added role: '{keyword.lower()}'" if added else f"'{keyword.lower()}' is already in your roles list.")
 
     elif text.startswith("/groups"):
-        from agent.tools.groups_tool import load_group_names, load_groups
+        from agent.tools.groups_tool import load_groups_with_names
         try:
-            groups = load_groups()
-            names = load_group_names()
+            groups = load_groups_with_names()
             if groups:
                 lines = ["Watched groups:"]
-                for gid in groups:
-                    name = names.get(gid, "unknown")
-                    lines.append(f"  {name}  ({gid})")
+                for gid, name in groups.items():
+                    display = name if name else "unknown"
+                    lines.append(f"  {display}  ({gid})")
                 lines.append("")
                 lines.append("Names refresh when the listener restarts.")
             else:

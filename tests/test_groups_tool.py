@@ -12,12 +12,25 @@ def test_load_groups_returns_empty_list(temp_groups):
     assert load_groups() == []
 
 
+def test_load_groups_with_names_returns_empty_dict(temp_groups):
+    from agent.tools.groups_tool import load_groups_with_names
+
+    assert load_groups_with_names() == {}
+
+
 def test_add_group_adds_id(temp_groups):
     from agent.tools.groups_tool import add_group, load_groups
 
     added = add_group(GROUP_A)
     assert added is True
     assert GROUP_A in load_groups()
+
+
+def test_add_group_stores_empty_name(temp_groups):
+    from agent.tools.groups_tool import add_group, load_groups_with_names
+
+    add_group(GROUP_A)
+    assert load_groups_with_names()[GROUP_A] == ""
 
 
 def test_add_group_returns_false_for_duplicate(temp_groups):
