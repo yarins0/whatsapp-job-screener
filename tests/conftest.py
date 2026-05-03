@@ -26,6 +26,17 @@ def temp_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
+def temp_groups(tmp_path, monkeypatch):
+    """Write an empty groups.json to a temp file and point GROUPS_PATH at it."""
+    import json
+
+    groups_file = tmp_path / "groups.json"
+    groups_file.write_text(json.dumps([]), encoding="utf-8")
+    monkeypatch.setenv("GROUPS_PATH", str(groups_file))
+    return groups_file
+
+
+@pytest.fixture()
 def temp_prefs(tmp_path, monkeypatch):
     """Write a minimal prefs.json to a temp file and point PREFS_PATH at it."""
     import json

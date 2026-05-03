@@ -130,10 +130,15 @@ def _handle_message(msg: dict) -> None:
     elif text.startswith("/start") or text.startswith("/commands"):
         _send(chat_id, (
             "Job Screener Bot — available commands:\n\n"
+            "Preferences:\n"
             "/prefs — show current roles, blocklist, and blocked cities\n"
             "/blockrole <keyword> — add a keyword to the role blocklist\n"
             "/blockcity <city> — add a city to the location blocklist\n"
             "/addrole <keyword> — add a keyword to the roles allow-list\n\n"
+            "Groups:\n"
+            "/groups — list watched WhatsApp groups\n"
+            "/addgroup <id> — start watching a group\n"
+            "/removegroup <id> — stop watching a group\n\n"
             "You can also tap the Block role / Block city buttons on any job notification."
         ))
 
@@ -176,6 +181,47 @@ def _handle_message(msg: dict) -> None:
             return
         added = add_to_roles(keyword)
         _send(chat_id, f"Added role: '{keyword.lower()}'" if added else f"'{keyword.lower()}' is already in your roles list.")
+
+    elif text.startswith("/groups"):
+        from agent.tools.groups_tool import load_groups
+        try:
+            groups = load_groups()
+            if groups:
+                lines = ["Watched groups:"] + [f"  {g}" for g in groups]
+            else:
+                lines = [
+                    "No groups are being watched yet.",
+                    "Use /addgroup <id> to add one.",
+                    "Run the listener once with an empty list to discover group IDs.",
+                ]
+            _send(chat_id, "\n".join(lines))
+        except Exception as exc:
+            _send(chat_id, f"Could not read groups: {exc}")
+
+    elif text.startswith("/addgroup"):
+        from agent.tools.groups_tool import add_group
+        group_id = text[len("/addgroup"):].strip()
+        if not group_id:
+            _send(chat_id, "Usage: /addgroup <group_id>\nExample: /addgroup 120363XXXXXXXXXX@g.us")
+            return
+        added = add_group(group_id)
+        if added:
+            _send(chat_id, (
+                f"Added group: {group_id}\n\n"
+                "Live messages from this group will be forwarded immediately.\n"
+                "Restart the listener to also catch up on any missed messages."
+            ))
+        else:
+            _send(chat_id, f"'{group_id}' is already in the watch list.")
+
+    elif text.startswith("/removegroup"):
+        from agent.tools.groups_tool import remove_group
+        group_id = text[len("/removegroup"):].strip()
+        if not group_id:
+            _send(chat_id, "Usage: /removegroup <group_id>")
+            return
+        removed = remove_group(group_id)
+        _send(chat_id, f"Removed group: {group_id}" if removed else f"'{group_id}' was not in the watch list.")
 
 
 # ---------------------------------------------------------------------------
