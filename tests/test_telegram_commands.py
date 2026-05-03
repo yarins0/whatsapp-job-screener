@@ -127,6 +127,37 @@ def test_addrole_reports_duplicate(temp_prefs):
 
 
 # ---------------------------------------------------------------------------
+# /start and /commands
+# ---------------------------------------------------------------------------
+
+def test_start_shows_command_list(temp_prefs):
+    from telegram_bot import _handle_message
+
+    with patch("telegram_bot._send") as mock_send:
+        _handle_message(_make_msg("/start"))
+
+    reply = mock_send.call_args[0][1]
+    assert "/blockrole" in reply
+    assert "/blockcity" in reply
+    assert "/addrole" in reply
+    assert "/prefs" in reply
+
+
+def test_commands_shows_same_as_start(temp_prefs):
+    from telegram_bot import _handle_message
+
+    with patch("telegram_bot._send") as mock_send:
+        _handle_message(_make_msg("/start"))
+        start_reply = mock_send.call_args[0][1]
+
+    with patch("telegram_bot._send") as mock_send:
+        _handle_message(_make_msg("/commands"))
+        commands_reply = mock_send.call_args[0][1]
+
+    assert start_reply == commands_reply
+
+
+# ---------------------------------------------------------------------------
 # /prefs
 # ---------------------------------------------------------------------------
 

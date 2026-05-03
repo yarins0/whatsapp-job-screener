@@ -117,7 +117,17 @@ def _handle_message(msg: dict) -> None:
     text: str = (msg.get("text") or "").strip()
     chat_id: int = msg["chat"]["id"]
 
-    if text.startswith("/prefs"):
+    if text.startswith("/start") or text.startswith("/commands"):
+        _send(chat_id, (
+            "Job Screener Bot — available commands:\n\n"
+            "/prefs — show current roles, blocklist, and blocked cities\n"
+            "/blockrole <keyword> — add a keyword to the role blocklist\n"
+            "/blockcity <city> — add a city to the location blocklist\n"
+            "/addrole <keyword> — add a keyword to the roles allow-list\n\n"
+            "You can also tap the Block role / Block city buttons on any job notification."
+        ))
+
+    elif text.startswith("/prefs"):
         try:
             prefs = load_prefs()
             roles = ", ".join(prefs.get("roles") or []) or "(none)"
