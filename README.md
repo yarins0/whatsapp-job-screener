@@ -1,7 +1,8 @@
-# WhatsApp Job Screener
+# Job Screening Agent
 
-A LangChain-powered agent that monitors WhatsApp groups, identifies job postings,
-extracts structured data, filters by your preferences, and ships you a daily digest.
+A LangChain-powered agent that monitors multiple job sources — WhatsApp groups,
+Telegram channels, and job boards — identifies job postings, extracts structured data,
+filters by your preferences, and delivers instant Telegram alerts and a daily digest.
 
 Built as a hands-on LangChain learning project — every major LangChain primitive is used somewhere.
 
@@ -16,6 +17,7 @@ Built as a hands-on LangChain learning project — every major LangChain primiti
 | `JsonOutputParser` + Pydantic | Parsing LLM JSON output into typed dicts |
 | `BaseLanguageModel` injection | Swapping real LLM for `FakeListChatModel` in tests |
 | `AgentExecutor` / Tools | Filter, dedup, store tools called in pipeline |
+| `WebBaseLoader` | Loading job board pages in the web scraper sources |
 | LangSmith tracing | Observability — every chain call is visible at smith.langchain.com |
 
 ---
