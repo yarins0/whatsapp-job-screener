@@ -19,6 +19,11 @@ listener/.wwebjs_auth/
 listener/.wwebjs_cache/
 .wwebjs_cache/
 listener/.last_seen.json
+sources/whatsapp/.last_seen.json
+
+# Telegram source listener session + state
+sources/telegram/*.session
+sources/telegram/.last_seen.json
 
 # Database
 db/*.db

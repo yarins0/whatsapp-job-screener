@@ -1,9 +1,17 @@
-"""Start all three processes in one terminal.
+"""Start all processes in one terminal.
 
 Usage:
     python start.py
 
 Ctrl+C shuts everything down.
+
+Processes:
+  [api]        FastAPI ingest endpoint (always on)
+  [digest]     Daily Telegram digest scheduler (always on)
+  [whatsapp]   WhatsApp listener (auto-restart on crash)
+  [telegram]   Telegram bot — commands + button callbacks (auto-restart)
+  [tg-source]  Telegram source listener — requires TELEGRAM_API_ID/HASH/PHONE
+  [web-source] Web scraper — polls AllJobs / Indeed every 30 min (auto-restart)
 """
 
 from __future__ import annotations
@@ -34,13 +42,15 @@ def main() -> None:
     python = sys.executable  # same venv Python that's running this script
 
     # (label, command, auto_restart)
-    # The listener and Telegram bot can recover by restarting; the API and
-    # digest cannot (they hold critical state or ports requiring a clean restart).
+    # The API and digest cannot auto-restart safely (hold ports / critical state).
+    # All listeners recover cleanly from a crash and are safe to restart.
     process_specs = [
-        ("api",      [python, "-m", "uvicorn", "api.main:app", "--port", "8000"], False),
-        ("digest",   [python, "-m", "digest.digest"],                             False),
-        ("listener", ["node", "listener/listener.js"],                            True),
-        ("telegram", [python, "telegram_bot.py"],                                 True),
+        ("api",        [python, "-m", "uvicorn", "api.main:app", "--port", "8000"], False),
+        ("digest",     [python, "-m", "digest.digest"],                             False),
+        ("whatsapp",   ["node", "sources/whatsapp/listener.js"],                    True),
+        ("telegram",   [python, "telegram_bot.py"],                                 True),
+        ("tg-source",  [python, "-m", "sources.telegram.listener"],                 True),
+        ("web-source", [python, "-m", "sources.web.listener"],                      True),
     ]
 
     # Propagate UTF-8 mode to all child processes. Without this, Python

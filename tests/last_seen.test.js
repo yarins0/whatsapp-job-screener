@@ -11,7 +11,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { load, save, update } = require('../listener/last_seen');
+const { load, save, update } = require('../sources/whatsapp/last_seen');
 
 function tmpFile() {
   return path.join(os.tmpdir(), `last_seen_test_${Date.now()}_${Math.random()}.json`);

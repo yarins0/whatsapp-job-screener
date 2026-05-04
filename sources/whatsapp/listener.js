@@ -4,10 +4,10 @@
  *
  * On reconnect (e.g. after the computer wakes from sleep) it replays any
  * messages received since the last time it was running, using timestamps
- * stored in listener/.last_seen.json.
+ * stored in sources/whatsapp/.last_seen.json.
  *
  *   1.  npm install
- *   2.  node listener/listener.js
+ *   2.  node sources/whatsapp/listener.js
  *   3.  Scan the QR code with WhatsApp on your phone.
  */
 
@@ -25,7 +25,8 @@ const lastSeen = require('./last_seen');
 // Group IDs are stored in agent/groups.json as a JSON array.
 // Edit the file directly, or use the /addgroup and /removegroup Telegram commands.
 // Run the listener once with an empty array to discover and print all group IDs.
-const GROUPS_FILE = path.join(__dirname, '..', 'agent', 'groups.json');
+// Path is resolved relative to the project root (two levels up from this file).
+const GROUPS_FILE = path.join(__dirname, '..', '..', 'agent', 'groups.json');
 
 // groups.json is a map: { "id@g.us": "Display Name", ... }
 // An empty string means the name has not been resolved yet.
@@ -73,7 +74,7 @@ const API_URL = process.env.INGEST_API_URL || 'http://localhost:8000/ingest';
 // more than this many messages during downtime, the oldest ones are skipped.
 const CATCHUP_LIMIT = 50;
 
-// Never replay messages older than this, even if last_seen.json has an older
+// Never replay messages older than this, even if .last_seen.json has an older
 // timestamp (or is missing). Prevents a huge backlog after a long absence.
 const CATCHUP_MAX_AGE_S = 48 * 60 * 60;
 
@@ -182,6 +183,8 @@ const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 // A Windows Chrome UA makes the device appear as "Chrome (Windows)" in the
 // WhatsApp app's linked-devices list instead of the default "Chrome (Mac OS)"
 // that Puppeteer's bundled Chromium reports.
+// dataPath is resolved relative to CWD (the project root when launched via start.py),
+// so existing auth in listener/.wwebjs_auth/ is reused without re-scanning the QR code.
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: 'listener/.wwebjs_auth' }),
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',

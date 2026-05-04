@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Node.js WhatsApp listener that forwards group messages to the Python ingest API.",
-  "main": "listener/listener.js",
+  "main": "sources/whatsapp/listener.js",
   "scripts": {
-    "start": "node listener/listener.js",
+    "start": "node sources/whatsapp/listener.js",
     "test": "jest"
   },
   "dependencies": {
