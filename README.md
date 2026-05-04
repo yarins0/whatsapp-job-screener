@@ -7,6 +7,11 @@ filters by your preferences, and delivers instant Telegram alerts and a daily di
 Built as a hands-on LangChain learning project — every major LangChain primitive is used somewhere.
 
 ---
+## Getting started
+
+See **[docs/SETUP.md](docs/SETUP.md)** for the full setup guide — prerequisites, environment variables, WhatsApp auth, Telegram configuration, LLM provider selection, and LangSmith observability.
+
+---
 
 ## Learning goals (LangChain concepts covered)
 
@@ -86,12 +91,6 @@ WhatsApp Groups
 | Scheduler | APScheduler — daily digest + web scraper polling |
 | Telegram bot | `python-telegram-bot`-style long-polling — commands + inline buttons |
 | Observability | LangSmith (free tier) |
-
----
-
-## Getting started
-
-See **[docs/SETUP.md](docs/SETUP.md)** for the full setup guide — prerequisites, environment variables, WhatsApp auth, Telegram configuration, LLM provider selection, and LangSmith observability.
 
 ---
 
