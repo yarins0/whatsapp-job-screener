@@ -128,7 +128,7 @@ Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXIS
 **Python (87 tests)** — all run offline. `conftest.py` provides:
 - `temp_db` — creates a fresh isolated DB (all three tables) and sets `JOBS_DB_PATH`
 - `temp_prefs` — writes a minimal `prefs.json` to a temp file and sets `PREFS_PATH`
-- `temp_groups` — writes an empty `groups.json` map to a temp file and sets `GROUPS_PATH`
+- `temp_groups` — writes an empty `whatsapp_sources.json` map to a temp file and sets `GROUPS_PATH`
 - `sample_messages` — loads `tests/sample_messages.json`
 
 Key test patterns:
@@ -138,7 +138,7 @@ Key test patterns:
 - Telegram bot command tests use `unittest.mock.patch("telegram_bot._send")` to capture replies without making real API calls.
 - Query tool tests use the `temp_db` fixture and insert rows directly via `sqlite3` to avoid going through the pipeline.
 
-**Node.js (7 tests)** — Jest tests for `listener/last_seen.js`. Each test uses a unique tmp file path so tests never touch the real state file.
+**Node.js (7 tests)** — Jest tests for `sources/whatsapp/last_seen.js`. Each test uses a unique tmp file path so tests never touch the real state file.
 
 ## Environment variables
 
@@ -149,8 +149,12 @@ Copy `.env.example` to `.env` and fill in:
 | `ANTHROPIC_API_KEY` | Yes (live only) | Claude API access |
 | `JOBS_DB_PATH` | No | Override DB path (defaults to `db/jobs.db`) |
 | `PREFS_PATH` | No | Override prefs file path (defaults to `agent/prefs.json`) |
-| `GROUPS_PATH` | No | Override groups file path (defaults to `agent/groups.json`) |
+| `GROUPS_PATH` | No | Override WhatsApp sources file path (defaults to `agent/whatsapp_sources.json`) |
 | `TELEGRAM_BOT_TOKEN` | No | Instant notifications, digest delivery, and bot commands |
 | `TELEGRAM_CHAT_ID` | No | Telegram recipient |
+| `TELEGRAM_API_ID` | No (Telegram source) | From [my.telegram.org](https://my.telegram.org) → API Development Tools |
+| `TELEGRAM_API_HASH` | No (Telegram source) | Same page as `TELEGRAM_API_ID` |
+| `TELEGRAM_PHONE` | No (Telegram source) | Phone number for the Telethon userbot, e.g. `+972501234567` |
+| `WEB_SCRAPER_INTERVAL_MINUTES` | No | Web scraper poll interval (default: 30) |
 | `LANGCHAIN_API_KEY` | No | LangSmith tracing |
 | `LANGCHAIN_TRACING` | No | Set to `true` to enable tracing |

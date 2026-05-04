@@ -128,9 +128,11 @@ Open `.env` in any text editor. The only key you *must* fill in to get started i
 | Variable | Required | How to get it |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | **Yes** | [console.anthropic.com](https://console.anthropic.com/) → API Keys |
-| `WATCHED_GROUPS` | After step 4 | Comma-separated group IDs — discovered in step 4 |
 | `TELEGRAM_BOT_TOKEN` | No | Chat with [@BotFather](https://t.me/BotFather) → `/newbot` |
 | `TELEGRAM_CHAT_ID` | No | Message your bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and find `"chat": {"id": ...}` |
+| `TELEGRAM_API_ID` | No (Telegram source) | [my.telegram.org](https://my.telegram.org) → API Development Tools → your app's `api_id` |
+| `TELEGRAM_API_HASH` | No (Telegram source) | Same page — your app's `api_hash` |
+| `TELEGRAM_PHONE` | No (Telegram source) | Your phone number, e.g. `+972501234567` |
 | `LANGCHAIN_API_KEY` | No | Free account at [smith.langchain.com](https://smith.langchain.com) |
 | `LANGCHAIN_TRACING` | No | Set `true` to enable LangSmith tracing |
 | `LANGCHAIN_PROJECT` | No | Project name in LangSmith (defaults to `default` if omitted) |
@@ -169,7 +171,7 @@ You can also update preferences live via Telegram once the bot is running — no
 
 ### Step 4 — Discover your WhatsApp group IDs
 
-Leave `agent/groups.json` as an empty object `{}` and run:
+Leave `agent/whatsapp_sources.json` as an empty object `{}` and run:
 
 ```bash
 python start.py
@@ -182,7 +184,7 @@ A QR code will appear in the terminal. **Scan it with WhatsApp** (Settings → L
   120363YYYYYYYYYY@g.us  —  Junior Dev Positions
 ```
 
-Add the groups you want to watch to `agent/groups.json`:
+Add the groups you want to watch to `agent/whatsapp_sources.json`:
 
 ```json
 {
@@ -193,7 +195,7 @@ Add the groups you want to watch to `agent/groups.json`:
 
 Display names are filled in automatically the next time the listener starts. You can also add and remove groups at any time using `/addgroup` and `/removegroup` in Telegram — live messages are forwarded immediately, catch-up on missed messages happens on the next restart.
 
-Press `Ctrl+C` to stop. Auth is saved to `listener/.wwebjs_auth/` — you won't need to scan the QR code again unless you delete that folder or log out.
+Press `Ctrl+C` to stop. Auth is saved to `sources/whatsapp/.wwebjs_auth/` — you won't need to scan the QR code again unless you delete that folder or log out.
 
 ---
 
@@ -211,16 +213,20 @@ python -m db.init_db
 python start.py
 ```
 
-Four processes start together and log to the same terminal:
+Six processes start together and log to the same terminal:
 
 | Prefix | Process | Role |
 |---|---|---|
-| `[api]` | FastAPI on port 8000 | Receives messages from the listener, runs the pipeline |
+| `[api]` | FastAPI on port 8000 | Receives messages from all listeners, runs the pipeline |
 | `[digest]` | APScheduler | Sends a Telegram summary digest each morning |
-| `[listener]` | whatsapp-web.js | Watches groups, replays missed messages on reconnect |
+| `[whatsapp]` | whatsapp-web.js | Watches WhatsApp groups, replays missed messages on reconnect |
 | `[telegram]` | Telegram bot | Long-polls for button callbacks and `/commands` |
+| `[tg-source]` | Telethon userbot | Watches Telegram channels from `agent/telegram_sources.json` (requires `TELEGRAM_API_ID/HASH/PHONE`) |
+| `[web-source]` | Web scraper | Polls AllJobs / Indeed every 30 min using your role keywords |
 
-Press `Ctrl+C` to stop everything cleanly. If the listener or Telegram bot crashes and restarts automatically, that's normal — both recover on their own.
+`[tg-source]` and `[web-source]` exit silently if their config or env vars are not set — the other processes are unaffected.
+
+Press `Ctrl+C` to stop everything cleanly.
 
 ---
 
