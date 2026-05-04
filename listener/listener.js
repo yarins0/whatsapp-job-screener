@@ -13,6 +13,8 @@
 
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
@@ -20,13 +22,49 @@ const lastSeen = require('./last_seen');
 
 // --- config ----------------------------------------------------------------
 
-// Comma-separated list of group IDs (e.g. 120363XXXXXXXXXX@g.us).
-// Group IDs never change even if the group is renamed.
-// Run the listener once with this empty to print all group IDs.
-const WATCHED_GROUPS = (process.env.WATCHED_GROUPS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+// Group IDs are stored in agent/groups.json as a JSON array.
+// Edit the file directly, or use the /addgroup and /removegroup Telegram commands.
+// Run the listener once with an empty array to discover and print all group IDs.
+const GROUPS_FILE = path.join(__dirname, '..', 'agent', 'groups.json');
+
+// groups.json is a map: { "id@g.us": "Display Name", ... }
+// An empty string means the name has not been resolved yet.
+function loadGroups() {
+  try {
+    const raw = fs.readFileSync(GROUPS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Object.keys(parsed).filter(Boolean);
+  } catch (err) {
+    console.warn('[groups] Could not read groups.json:', err.message);
+    return [];
+  }
+}
+
+// Resolve display names for all watched groups and write them back into
+// groups.json so the Telegram bot can show human-readable names in /groups.
+// Preserves existing entries so names from previous sessions are not lost if
+// a group temporarily fails to load.
+async function saveGroupNames(groupIds) {
+  let data = {};
+  try {
+    data = JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf8'));
+  } catch (_) { /* use empty map if file is missing or corrupt */ }
+
+  for (const groupId of groupIds) {
+    try {
+      const chat = await client.getChatById(groupId);
+      data[groupId] = chat.name;
+    } catch (err) {
+      console.warn(`[groups] Could not resolve name for ${groupId}:`, err.message);
+    }
+  }
+
+  try {
+    fs.writeFileSync(GROUPS_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.warn('[groups] Could not write groups.json:', err.message);
+  }
+}
 
 const API_URL = process.env.INGEST_API_URL || 'http://localhost:8000/ingest';
 
@@ -140,8 +178,13 @@ const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 
 // --- client ----------------------------------------------------------------
 
+// WhatsApp derives the linked-device name from the user agent string.
+// A Windows Chrome UA makes the device appear as "Chrome (Windows)" in the
+// WhatsApp app's linked-devices list instead of the default "Chrome (Mac OS)"
+// that Puppeteer's bundled Chromium reports.
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: 'listener/.wwebjs_auth' }),
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   puppeteer: {
     args: ['--no-sandbox'],
     protocolTimeout: 60000, // 60s — getChats() on large accounts can be slow
@@ -159,26 +202,35 @@ let isReady = false;
 
 client.on('ready', async () => {
   isReady = true;
-  if (WATCHED_GROUPS.length === 0) {
+  // Snapshot the groups list once at startup — used for catch-up only.
+  // Live message filtering re-reads groups.json each time, so /addgroup
+  // and /removegroup take effect without a restart.
+  const watchedGroups = loadGroups();
+
+  if (watchedGroups.length === 0) {
     // Discovery mode: list all groups so the user can pick IDs.
-    console.log('\nConnected. WATCHED_GROUPS is empty — fetching your groups...\n');
+    console.log('\nConnected. groups.json is empty — fetching your groups...\n');
     try {
       const chats = await client.getChats();
       const groups = chats.filter((c) => c.isGroup);
       console.log(`Found ${groups.length} groups:\n`);
       groups.forEach((g) => console.log(`  ${g.id._serialized}  —  ${ltr(g.name)}`));
-      console.log('\nCopy the IDs you want into WATCHED_GROUPS in your .env file, then restart.\n');
+      console.log('\nUse /addgroup <id> in Telegram, or edit agent/groups.json directly, then restart.\n');
     } catch (err) {
       console.error('Could not fetch groups:', err.message);
     }
     return;
   }
 
-  console.log(`\nConnected. Watching ${WATCHED_GROUPS.length} group(s). Checking for missed messages...\n`);
+  console.log(`\nConnected. Watching ${watchedGroups.length} group(s). Checking for missed messages...\n`);
+
+  // Cache group display names so the Telegram bot can show them in /groups.
+  await saveGroupNames(watchedGroups);
+
   // Snapshot timestamps before the loop so that live messages arriving during
   // catch-up can't advance a group's cursor and cause older messages to be missed.
   const snapshot = lastSeen.load();
-  for (const groupId of WATCHED_GROUPS) {
+  for (const groupId of watchedGroups) {
     await catchUp(groupId, snapshot[groupId] || 0);
   }
   console.log('\nReady — listening for new messages.\n');
@@ -199,7 +251,9 @@ client.on('message', async (msg) => {
   try {
     const chat = await msg.getChat();
     if (!chat.isGroup) return;
-    if (!WATCHED_GROUPS.includes(chat.id._serialized)) return;
+    // Re-read groups.json on every message so /addgroup and /removegroup
+    // take effect immediately without restarting the listener.
+    if (!loadGroups().includes(chat.id._serialized)) return;
 
     await forwardMessage(msg, chat.name);
     lastSeen.update(chat.id._serialized, msg.timestamp);
@@ -208,7 +262,14 @@ client.on('message', async (msg) => {
   }
 });
 
-client.initialize();
+// Catch transient startup failures (e.g. "execution context was destroyed"
+// when WhatsApp Web navigates during Puppeteer script injection). Exiting with
+// code 1 lets start.py restart the listener automatically; it usually succeeds
+// on the next attempt.
+client.initialize().catch((err) => {
+  console.error('[init] initialize() failed — exiting for restart:', err.message);
+  process.exit(1);
+});
 
 // Heartbeat: detect silent disconnects (e.g. after PC sleep) where the
 // 'disconnected' event never fires. Polls getState() and triggers a reconnect

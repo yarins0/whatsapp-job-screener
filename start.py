@@ -34,12 +34,13 @@ def main() -> None:
     python = sys.executable  # same venv Python that's running this script
 
     # (label, command, auto_restart)
-    # The listener can recover by restarting; the API and digest cannot (they
-    # hold critical state or ports that require a clean restart of everything).
+    # The listener and Telegram bot can recover by restarting; the API and
+    # digest cannot (they hold critical state or ports requiring a clean restart).
     process_specs = [
         ("api",      [python, "-m", "uvicorn", "api.main:app", "--port", "8000"], False),
         ("digest",   [python, "-m", "digest.digest"],                             False),
         ("listener", ["node", "listener/listener.js"],                            True),
+        ("telegram", [python, "telegram_bot.py"],                                 True),
     ]
 
     # Propagate UTF-8 mode to all child processes. Without this, Python

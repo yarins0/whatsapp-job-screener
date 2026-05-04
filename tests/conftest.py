@@ -26,6 +26,34 @@ def temp_db(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
+def temp_groups(tmp_path, monkeypatch):
+    """Write an empty groups.json map to a temp file and point GROUPS_PATH at it."""
+    import json
+
+    groups_file = tmp_path / "groups.json"
+    groups_file.write_text(json.dumps({}), encoding="utf-8")
+    monkeypatch.setenv("GROUPS_PATH", str(groups_file))
+    return groups_file
+
+
+@pytest.fixture()
+def temp_prefs(tmp_path, monkeypatch):
+    """Write a minimal prefs.json to a temp file and point PREFS_PATH at it."""
+    import json
+
+    prefs = {
+        "roles": ["backend", "software engineer", "python", "junior"],
+        "blocklist": ["unpaid", "senior"],
+        "location_blocklist": ["Jerusalem"],
+        "min_salary": None,
+    }
+    prefs_file = tmp_path / "prefs.json"
+    prefs_file.write_text(json.dumps(prefs), encoding="utf-8")
+    monkeypatch.setenv("PREFS_PATH", str(prefs_file))
+    return prefs_file
+
+
+@pytest.fixture()
 def sample_messages():
     import json
 

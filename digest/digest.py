@@ -92,7 +92,7 @@ def format_digest(jobs: list[dict]) -> str:
     return "\n".join(lines).rstrip()
 
 
-def _send_telegram(text: str) -> bool:
+def _send_telegram(text: str, reply_markup: dict | None = None) -> bool:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
@@ -100,9 +100,13 @@ def _send_telegram(text: str) -> bool:
         print(text)
         return False
 
+    payload: dict = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
     resp = requests.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+        json=payload,
         timeout=15,
     )
     resp.raise_for_status()

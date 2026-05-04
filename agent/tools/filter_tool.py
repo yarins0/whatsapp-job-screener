@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from agent.memory import USER_PREFS, UserPreferences
+from agent.memory import UserPreferences
+from agent.tools.prefs_tool import load_prefs
 
 
 def filter_job(job: dict, prefs: Optional[UserPreferences] = None) -> Tuple[bool, str]:
@@ -12,8 +13,11 @@ def filter_job(job: dict, prefs: Optional[UserPreferences] = None) -> Tuple[bool
 
     ``reason`` is an empty string when the job passes, or a human-readable
     explanation of which rule rejected it.
+
+    Reads from agent/prefs.json on every call (no caching) so changes made
+    via the Telegram bot take effect on the next message without a restart.
     """
-    p = prefs or USER_PREFS
+    p = prefs or load_prefs()
 
     haystack = " ".join(
         [

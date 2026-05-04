@@ -44,27 +44,28 @@ WhatsApp Groups
 │              LangChain Pipeline                  │
 │              (agent/pipeline.py)                 │
 │                                                  │
-│  1. Classifier chain  →  is_job_post + confidence│
-│     (drops if confidence < 0.6)                  │
+│  Adaptive mode (per group, auto-selected):       │
+│  • separate  — classify then extract (2 calls)   │
+│  • combined  — classify+extract in 1 call        │
+│    (auto-switches when group ≥70% job posts)     │
 │                                                  │
-│  2. Extractor chain   →  title, company,         │
-│     location, skills, salary, remote, contact    │
-│                                                  │
-│  3. Dedup tool        →  hash check (SQLite)     │
-│                                                  │
-│  4. Filter tool       →  match USER_PREFS        │
-│                                                  │
-│  5. Store tool        →  insert into jobs.db     │
-│                                                  │
-│  6. Telegram notify   →  instant alert per job   │
+│  Per extracted job (supports multi-job messages):│
+│  3. Dedup tool  →  hash check (SQLite)           │
+│  4. Filter tool →  match agent/prefs.json        │
+│  5. Store tool  →  insert into jobs.db           │
+│  6. Notify      →  instant Telegram alert        │
+│                    + Block role / Block city      │
+│                      inline buttons              │
 └────────┬────────────────────────────────────────┘
          │
          ▼
-┌─────────────────────┐
-│  Digest Scheduler   │  APScheduler cron (daily)
-│  (digest/digest.py) │  Formats unseen jobs, sends
-│                     │  via Telegram (or stdout)
-└─────────────────────┘
+┌─────────────────────┐     ┌──────────────────────┐
+│  Digest Scheduler   │     │  Telegram Bot         │
+│  (digest/digest.py) │     │  (telegram_bot.py)    │
+│  APScheduler cron   │     │  Long-polls updates;  │
+│  Daily summary via  │     │  handles button       │
+│  Telegram or stdout │     │  callbacks + commands │
+└─────────────────────┘     └──────────────────────┘
 ```
 
 ---
@@ -77,7 +78,7 @@ WhatsApp Groups
 | API / ingest | Python + FastAPI |
 | LLM framework | LangChain (Python) |
 | LLM model | `claude-haiku-4-5-20251001` via `langchain-anthropic` |
-| Database | SQLite (two tables: `jobs`, `seen_hashes`) |
+| Database | SQLite (three tables: `jobs`, `seen_hashes`, `group_stats`) |
 | Scheduler | APScheduler |
 | Notifications | Telegram Bot API (falls back to stdout) |
 | Observability | LangSmith (free tier) |
@@ -138,14 +139,14 @@ Open `.env` in any text editor. The only key you *must* fill in to get started i
 
 ### Step 3 — Configure your job preferences
 
-Open `agent/memory.py` and edit `USER_PREFS` to match what you're looking for:
+Open `agent/prefs.json` and edit it to match what you're looking for:
 
-```python
-USER_PREFS = {
-    "roles": ["backend", "python", "node", "fullstack", "junior"],
-    "blocklist": ["unpaid", "volunteer", "senior", "sales", "qa"],
-    "location_blocklist": ["Jerusalem", "Haifa"],
-    "min_salary": None,
+```json
+{
+  "roles": ["backend", "python", "node", "fullstack", "junior"],
+  "blocklist": ["unpaid", "volunteer", "senior", "sales", "qa"],
+  "location_blocklist": ["Jerusalem", "Haifa"],
+  "min_salary": null
 }
 ```
 
@@ -155,11 +156,20 @@ USER_PREFS = {
 | `blocklist` | Any post matching these words is auto-rejected (checked against title, summary, and skills) |
 | `location_blocklist` | Cities to skip. Everything else passes. Remote jobs always pass. |
 
+You can also update preferences live via Telegram once the bot is running — no restart needed:
+
+| Command | Effect |
+|---|---|
+| `/prefs` | Show current preferences |
+| `/blockrole <keyword>` | Add to blocklist |
+| `/blockcity <city>` | Add to location blocklist |
+| `/addrole <keyword>` | Add to roles allow-list |
+
 ---
 
 ### Step 4 — Discover your WhatsApp group IDs
 
-Leave `WATCHED_GROUPS` empty in `.env` for now and run:
+Leave `agent/groups.json` as an empty object `{}` and run:
 
 ```bash
 python start.py
@@ -172,11 +182,16 @@ A QR code will appear in the terminal. **Scan it with WhatsApp** (Settings → L
   120363YYYYYYYYYY@g.us  —  Junior Dev Positions
 ```
 
-Copy the IDs of the groups you want to watch into `.env`:
+Add the groups you want to watch to `agent/groups.json`:
 
+```json
+{
+  "120363XXXXXXXXXX@g.us": "",
+  "120363YYYYYYYYYY@g.us": ""
+}
 ```
-WATCHED_GROUPS=120363XXXXXXXXXX@g.us,120363YYYYYYYYYY@g.us
-```
+
+Display names are filled in automatically the next time the listener starts. You can also add and remove groups at any time using `/addgroup` and `/removegroup` in Telegram — live messages are forwarded immediately, catch-up on missed messages happens on the next restart.
 
 Press `Ctrl+C` to stop. Auth is saved to `listener/.wwebjs_auth/` — you won't need to scan the QR code again unless you delete that folder or log out.
 
@@ -196,15 +211,16 @@ python -m db.init_db
 python start.py
 ```
 
-Three processes start together and log to the same terminal:
+Four processes start together and log to the same terminal:
 
 | Prefix | Process | Role |
 |---|---|---|
 | `[api]` | FastAPI on port 8000 | Receives messages from the listener, runs the pipeline |
 | `[digest]` | APScheduler | Sends a Telegram summary digest each morning |
 | `[listener]` | whatsapp-web.js | Watches groups, replays missed messages on reconnect |
+| `[telegram]` | Telegram bot | Long-polls for button callbacks and `/commands` |
 
-Press `Ctrl+C` to stop everything cleanly. If the listener crashes and restarts automatically, that's normal — it recovers from WhatsApp disconnects on its own.
+Press `Ctrl+C` to stop everything cleanly. If the listener or Telegram bot crashes and restarts automatically, that's normal — both recover on their own.
 
 ---
 
@@ -213,9 +229,13 @@ Press `Ctrl+C` to stop everything cleanly. If the listener crashes and restarts 
 Every WhatsApp message in a watched group is sent to the pipeline:
 
 1. **Not a job post?** → dropped silently
-2. **Already seen?** → dropped (dedup)
+2. **Already seen?** → dropped (dedup) — each job in a multi-job message is deduped independently
 3. **Doesn't match your preferences?** → dropped (logged with reason)
 4. **Passes everything?** → stored in `db/jobs.db` + instant Telegram alert (if configured)
+
+A message can contain multiple job posts — each is processed independently through steps 2–4.
+
+The pipeline tracks per-group job-post rates automatically. Once a group reaches 50 messages and ≥70% are job posts, it switches to a single combined LLM call instead of two separate calls, reducing API cost roughly by half for dedicated job groups.
 
 The daily digest fires each morning and summarises everything stored since the last digest.
 
@@ -223,7 +243,7 @@ The daily digest fires each morning and summarises everything stored since the l
 
 ## Tests
 
-**Python (22 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` using scripted JSON responses.
+**Python (74 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` using scripted JSON responses.
 
 ```bash
 pytest tests/ -v                                              # all tests
@@ -251,31 +271,40 @@ Set `LANGCHAIN_TRACING_V2=true` and `LANGCHAIN_API_KEY` in `.env`. Every chain i
 ```
 agent/
   pipeline.py        Main async orchestrator — start reading here
+  prefs.json         User preferences (roles, blocklist, location_blocklist) — edit directly or via bot
+  groups.json        Watched WhatsApp group IDs and display names — edit directly or via bot
+  memory.py          UserPreferences TypedDict (type definition only)
   chains/
-    classifier.py    LCEL chain: is_job_post + confidence
-    extractor.py     LCEL chain: structured JobPost fields
+    classifier.py    LCEL chain: is_job_post + confidence (separate mode)
+    extractor.py     LCEL chain: list of JobPost dicts (separate mode)
+    combined.py      LCEL chain: classify+extract in one call (combined mode)
   tools/
-    filter_tool.py   Match job against USER_PREFS
+    filter_tool.py   Match job against prefs.json
     dedup_tool.py    Hash-based dedup via seen_hashes table
     store_tool.py    Insert job into jobs table
-  memory.py          USER_PREFS dict (edit this)
+    stats_tool.py    Per-group job-post rate tracking; drives adaptive mode
+    prefs_tool.py    load_prefs(), add_to_blocklist(), add_to_location_blocklist(), add_to_roles()
+    groups_tool.py   load_groups(), add_group(), remove_group()
 
 api/
   main.py            FastAPI: POST /ingest, GET /healthz
 
 listener/
-  listener.js        whatsapp-web.js client; QR auth, heartbeat reconnect, catch-up replay
+  listener.js        whatsapp-web.js client; reads groups.json; QR auth, heartbeat, catch-up replay
   last_seen.js       Per-group timestamp persistence (path-injectable for tests)
 
 digest/
   digest.py          APScheduler cron + format_digest() (pure, testable)
 
+telegram_bot.py      Long-polls Telegram; handles feedback buttons + /help /commands /prefs
+                     /blockrole /blockcity /addrole /groups /addgroup /removegroup
+
 db/
-  schema.sql         SQLite schema (jobs + seen_hashes)
+  schema.sql         SQLite schema (jobs, seen_hashes, group_stats)
   init_db.py         python -m db.init_db
 
 tests/
-  conftest.py        temp_db fixture + sample_messages fixture
+  conftest.py        temp_db, temp_prefs, temp_groups fixtures + sample_messages
   sample_messages.json
 ```
 
@@ -286,6 +315,6 @@ tests/
 - **LangGraph** — convert the pipeline to a stateful graph for retries and branching
 - **Conversational interface** — `ConversationChain` so you can query: *"show me remote Python jobs from this week"*
 - **Vector search** — `Chroma` or `FAISS` to find similar jobs you've seen before
-- **Feedback loop** — thumbs-up/down on digest items to refine `USER_PREFS` automatically
+- ~~**Feedback loop**~~ — ✅ implemented: inline buttons on notifications + Telegram commands to manage preferences and groups
 - **Additional sources** — `langchain_community.document_loaders` for Telegram channels or LinkedIn
 - **Browse jobs CLI** — `python -m agent.list_jobs` to review stored jobs from the terminal
