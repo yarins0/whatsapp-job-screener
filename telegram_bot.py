@@ -27,6 +27,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 POLL_TIMEOUT = 30  # seconds for each long-poll request
 
+# The owner's chat ID is the only account allowed to run write commands.
+# Loaded once at startup; if unset, write commands are disabled for everyone.
+_OWNER_CHAT_ID: int | None = (
+    int(os.environ["TELEGRAM_CHAT_ID"]) if os.environ.get("TELEGRAM_CHAT_ID") else None
+)
+
+_READONLY_DENIED = (
+    "🔒 This is a read-only demo. "
+    "Only the owner can modify preferences and sources."
+)
+
 
 # ---------------------------------------------------------------------------
 # Telegram API helpers
@@ -51,6 +62,11 @@ def _answer_callback(callback_id: str, text: str) -> None:
         logger.warning("answerCallbackQuery failed: %s", exc)
 
 
+def _is_owner(chat_id: int) -> bool:
+    """Return True if this chat_id belongs to the configured owner."""
+    return _OWNER_CHAT_ID is not None and chat_id == _OWNER_CHAT_ID
+
+
 def _send(chat_id: int | str, text: str) -> None:
     try:
         _api("sendMessage", chat_id=chat_id, text=text)
@@ -69,6 +85,10 @@ def _handle_callback(query: dict) -> None:
     data: str = query.get("data", "")
     chat_id: int = query["from"]["id"]
     callback_id: str = query["id"]
+
+    if not _is_owner(chat_id):
+        _answer_callback(callback_id, _READONLY_DENIED)
+        return
 
     if data.startswith("block_role:"):
         # format: block_role:<job_id>:<keyword>
@@ -129,27 +149,50 @@ def _handle_message(msg: dict) -> None:
         ))
 
     elif text.startswith("/start") or text.startswith("/commands"):
-        _send(chat_id, (
-            "Job Screener Bot — available commands:\n\n"
-            "Jobs:\n"
-            "/jobs — recent jobs (last 7 days)\n"
-            "/jobs <keyword> — filter by keyword\n"
-            "/jobs <keyword> unseen — keyword + unseen only\n\n"
-            "Preferences:\n"
-            "/prefs — show current roles, blocklist, and blocked cities\n"
-            "/blockrole <keyword> — add a keyword to the role blocklist\n"
-            "/blockcity <city> — add a city to the location blocklist\n"
-            "/addrole <keyword> — add a keyword to the roles allow-list\n\n"
-            "WhatsApp groups:\n"
-            "/groups — list watched WhatsApp groups\n"
-            "/addgroup <id> — start watching a group\n"
-            "/removegroup <id> — stop watching a group\n\n"
-            "Telegram channels:\n"
-            "/tgsources — list watched Telegram channels\n"
-            "/addtgsource <@username or id> — start watching a channel\n"
-            "/removetgsource <@username or id> — stop watching a channel\n\n"
-            "You can also tap the Block role / Block city buttons on any job notification."
-        ))
+        if _is_owner(chat_id):
+            _send(chat_id, (
+                "Job Screener Bot — available commands:\n\n"
+                "Jobs:\n"
+                "/jobs — recent jobs (last 7 days)\n"
+                "/jobs <keyword> — filter by keyword\n"
+                "/jobs <keyword> unseen — keyword + unseen only\n\n"
+                "Preferences:\n"
+                "/prefs — show current roles, blocklist, and blocked cities\n"
+                "/blockrole <keyword> — add a keyword to the role blocklist\n"
+                "/blockcity <city> — add a city to the location blocklist\n"
+                "/addrole <keyword> — add a keyword to the roles allow-list\n\n"
+                "WhatsApp groups:\n"
+                "/groups — list watched WhatsApp groups\n"
+                "/addgroup <id> — start watching a group\n"
+                "/removegroup <id> — stop watching a group\n\n"
+                "Telegram channels:\n"
+                "/tgsources — list watched Telegram channels\n"
+                "/addtgsource <@username or id> — start watching a channel\n"
+                "/removetgsource <@username or id> — stop watching a channel\n\n"
+                "You can also tap the Block role / Block city buttons on any job notification."
+            ))
+        else:
+            _send(chat_id, (
+                "Job Screener Bot — available commands:\n"
+                "(You are in read-only mode — view commands are available, write commands are owner-only.)\n\n"
+                "Jobs:\n"
+                "/jobs — recent jobs (last 7 days)\n"
+                "/jobs <keyword> — filter by keyword\n"
+                "/jobs <keyword> unseen — keyword + unseen only\n\n"
+                "Preferences (view only):\n"
+                "/prefs — show current roles, blocklist, and blocked cities\n"
+                "/blockrole <keyword> — 🔒 owner only\n"
+                "/blockcity <city> — 🔒 owner only\n"
+                "/addrole <keyword> — 🔒 owner only\n\n"
+                "WhatsApp groups (view only):\n"
+                "/groups — list watched WhatsApp groups\n"
+                "/addgroup <id> — 🔒 owner only\n"
+                "/removegroup <id> — 🔒 owner only\n\n"
+                "Telegram channels (view only):\n"
+                "/tgsources — list watched Telegram channels\n"
+                "/addtgsource <@username or id> — 🔒 owner only\n"
+                "/removetgsource <@username or id> — 🔒 owner only"
+            ))
 
     elif text.startswith("/jobs"):
         from agent.tools.query_tool import format_jobs_telegram, query_jobs
@@ -185,6 +228,9 @@ def _handle_message(msg: dict) -> None:
         _send(chat_id, reply)
 
     elif text.startswith("/blockrole"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
         keyword = text[len("/blockrole"):].strip()
         if not keyword:
             _send(chat_id, "Usage: /blockrole <keyword>")
@@ -193,6 +239,9 @@ def _handle_message(msg: dict) -> None:
         _send(chat_id, f"Blocked: '{keyword.lower()}'" if added else f"'{keyword.lower()}' was already blocked.")
 
     elif text.startswith("/blockcity"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
         city = text[len("/blockcity"):].strip()
         if not city:
             _send(chat_id, "Usage: /blockcity <city>")
@@ -201,6 +250,9 @@ def _handle_message(msg: dict) -> None:
         _send(chat_id, f"Blocked city: '{city}'" if added else f"'{city}' was already blocked.")
 
     elif text.startswith("/addrole"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
         keyword = text[len("/addrole"):].strip()
         if not keyword:
             _send(chat_id, "Usage: /addrole <keyword>")
@@ -230,6 +282,9 @@ def _handle_message(msg: dict) -> None:
             _send(chat_id, f"Could not read groups: {exc}")
 
     elif text.startswith("/addgroup"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
         from agent.tools.groups_tool import add_group
         group_id = text[len("/addgroup"):].strip()
         if not group_id:
@@ -252,6 +307,9 @@ def _handle_message(msg: dict) -> None:
             _send(chat_id, f"'{group_id}' is already in the watch list.")
 
     elif text.startswith("/removegroup"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
         from agent.tools.groups_tool import remove_group
         group_id = text[len("/removegroup"):].strip()
         if not group_id:
@@ -275,6 +333,9 @@ def _handle_message(msg: dict) -> None:
             _send(chat_id, f"Could not read Telegram sources: {exc}")
 
     elif text.startswith("/addtgsource"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
         from agent.tools.telegram_sources_tool import add_source
         channel = text[len("/addtgsource"):].strip()
         if not channel:
@@ -287,6 +348,9 @@ def _handle_message(msg: dict) -> None:
             _send(chat_id, f"{channel} is already in the watch list.")
 
     elif text.startswith("/removetgsource"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
         from agent.tools.telegram_sources_tool import remove_source
         channel = text[len("/removetgsource"):].strip()
         if not channel:
