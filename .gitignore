@@ -15,10 +15,9 @@ venv/
 
 # Node
 node_modules/
-listener/.wwebjs_auth/
-listener/.wwebjs_cache/
+sources/whatsapp/.wwebjs_auth/
+sources/whatsapp/.wwebjs_cache/
 .wwebjs_cache/
-listener/.last_seen.json
 sources/whatsapp/.last_seen.json
 
 # Telegram source listener session + state
