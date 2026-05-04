@@ -140,10 +140,14 @@ def _handle_message(msg: dict) -> None:
             "/blockrole <keyword> — add a keyword to the role blocklist\n"
             "/blockcity <city> — add a city to the location blocklist\n"
             "/addrole <keyword> — add a keyword to the roles allow-list\n\n"
-            "Groups:\n"
+            "WhatsApp groups:\n"
             "/groups — list watched WhatsApp groups\n"
             "/addgroup <id> — start watching a group\n"
             "/removegroup <id> — stop watching a group\n\n"
+            "Telegram channels:\n"
+            "/tgsources — list watched Telegram channels\n"
+            "/addtgsource <@username or id> — start watching a channel\n"
+            "/removetgsource <@username or id> — stop watching a channel\n\n"
             "You can also tap the Block role / Block city buttons on any job notification."
         ))
 
@@ -255,6 +259,41 @@ def _handle_message(msg: dict) -> None:
             return
         removed = remove_group(group_id)
         _send(chat_id, f"Removed group: {group_id}" if removed else f"'{group_id}' was not in the watch list.")
+
+    elif text.startswith("/tgsources"):
+        from agent.tools.telegram_sources_tool import load_sources
+        try:
+            sources = load_sources()
+            if sources:
+                lines = ["Watched Telegram channels:"]
+                for channel, name in sources.items():
+                    lines.append(f"  {channel}" + (f" — {name}" if name else ""))
+                _send(chat_id, "\n".join(lines))
+            else:
+                _send(chat_id, "No Telegram channels are being watched yet.\nUse /addtgsource @username to add one.")
+        except Exception as exc:
+            _send(chat_id, f"Could not read Telegram sources: {exc}")
+
+    elif text.startswith("/addtgsource"):
+        from agent.tools.telegram_sources_tool import add_source
+        channel = text[len("/addtgsource"):].strip()
+        if not channel:
+            _send(chat_id, "Usage: /addtgsource <@username or channel_id>")
+            return
+        added = add_source(channel)
+        if added:
+            _send(chat_id, f"Added Telegram channel: {channel}\n\nRestart tg-source for it to take effect.")
+        else:
+            _send(chat_id, f"{channel} is already in the watch list.")
+
+    elif text.startswith("/removetgsource"):
+        from agent.tools.telegram_sources_tool import remove_source
+        channel = text[len("/removetgsource"):].strip()
+        if not channel:
+            _send(chat_id, "Usage: /removetgsource <@username or channel_id>\n\nUse /tgsources to see watched channels.")
+            return
+        removed = remove_source(channel)
+        _send(chat_id, f"Removed Telegram channel: {channel}" if removed else f"'{channel}' was not in the watch list.")
 
 
 # ---------------------------------------------------------------------------

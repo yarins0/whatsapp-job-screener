@@ -285,7 +285,20 @@ npm test
 
 ## LangSmith observability
 
-Set `LANGCHAIN_TRACING=true` and `LANGCHAIN_API_KEY` in `.env`. Every chain invocation appears at [smith.langchain.com](https://smith.langchain.com) — you can inspect the exact prompt, LLM response, latency, and token cost per step. Useful for debugging classifier confidence and extractor output.
+Set these two variables in `.env` to enable tracing:
+
+```
+LANGCHAIN_TRACING=true
+LANGCHAIN_API_KEY=<your key from smith.langchain.com>
+LANGCHAIN_PROJECT=job-screener   # optional — groups traces in the UI
+```
+
+Every chain invocation (classifier, extractor, combined) is then visible at [smith.langchain.com](https://smith.langchain.com) with the exact prompt sent, the raw LLM response, latency, and token cost per step.
+
+Useful for:
+- Debugging why a message was or wasn't classified as a job post
+- Inspecting extractor output when fields are missing or wrong
+- Comparing separate vs combined mode cost per group
 
 ---
 
@@ -304,25 +317,37 @@ agent/
   list_jobs.py       CLI: python -m agent.list_jobs [--days N] [--role KW] [--unseen] [--limit N]
   tools/
     filter_tool.py   Match job against prefs.json
-    dedup_tool.py    Hash-based dedup via seen_hashes table
-    store_tool.py    Insert job into jobs table
-    stats_tool.py    Per-group job-post rate tracking; drives adaptive mode
-    prefs_tool.py    load_prefs(), add_to_blocklist(), add_to_location_blocklist(), add_to_roles()
-    groups_tool.py   load_groups(), add_group(), remove_group()
-    query_tool.py    query_jobs() + format_jobs_telegram(); shared by CLI and /jobs bot command
+    dedup_tool.py              Hash-based dedup; is_duplicate() (structured) + is_raw_duplicate() (pre-LLM)
+    store_tool.py              Insert job into jobs table
+    stats_tool.py              Per-group job-post rate tracking; drives adaptive mode
+    prefs_tool.py              load_prefs(), add_to_blocklist(), add_to_location_blocklist(), add_to_roles()
+    groups_tool.py             load_groups(), add_group(), remove_group()
+    telegram_sources_tool.py   load_sources(), add_source(), remove_source() for telegram_sources.json
+    query_tool.py              query_jobs() + format_jobs_telegram(); shared by CLI and /jobs bot command
 
 api/
   main.py            FastAPI: POST /ingest, GET /healthz
 
-listener/
-  listener.js        whatsapp-web.js client; reads groups.json; QR auth, heartbeat, catch-up replay
-  last_seen.js       Per-group timestamp persistence (path-injectable for tests)
+sources/
+  whatsapp/
+    listener.js      whatsapp-web.js client; reads groups.json; QR auth, heartbeat, catch-up replay
+    last_seen.js     Per-group timestamp persistence (path-injectable for tests)
+  telegram/
+    listener.py      Telethon userbot; watches channels in telegram_sources.json; catch-up replay
+                     Requires one-time interactive auth (see Step 6 in setup guide)
+  web/
+    listener.py      APScheduler-based poller; calls is_raw_duplicate() before forwarding to ingest
+    scrapers/
+      alljobs.py     AllJobs.co.il scraper (currently disabled — enable in agent/web_sources.json)
 
 digest/
   digest.py          APScheduler cron + format_digest() (pure, testable)
 
-telegram_bot.py      Long-polls Telegram; handles feedback buttons + /help /commands /prefs
-                     /blockrole /blockcity /addrole /groups /addgroup /removegroup
+telegram_bot.py      Long-polls Telegram; handles feedback buttons + commands:
+                     /help /commands /prefs
+                     /blockrole /blockcity /addrole
+                     /groups /addgroup /removegroup
+                     /tgsources /addtgsource /removetgsource
                      /jobs [keyword] [unseen]
 
 db/
@@ -342,5 +367,6 @@ tests/
 - **Conversational interface** — `ConversationChain` so you can query: *"show me remote Python jobs from this week"*
 - **Vector search** — `Chroma` or `FAISS` to find similar jobs you've seen before
 - ~~**Feedback loop**~~ — ✅ implemented: inline buttons on notifications + Telegram commands to manage preferences and groups
-- **Additional sources** — `langchain_community.document_loaders` for Telegram channels or LinkedIn
+- ~~**Additional sources (Telegram)**~~ — ✅ implemented: Telethon userbot watches any channel the account is a member of; manage via `/tgsources` bot commands
+- **Additional sources (LinkedIn / job boards)** — re-enable web scrapers with site-native filters once confirmed URLs are available
 - ~~**Browse jobs CLI**~~ — ✅ implemented: `python -m agent.list_jobs` + `/jobs` Telegram command

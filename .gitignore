@@ -35,3 +35,4 @@ db/*.db-journal
 
 # Claude Code
 .claude/
+.gstack/
