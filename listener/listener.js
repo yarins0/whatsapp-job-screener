@@ -257,7 +257,14 @@ client.on('message', async (msg) => {
   }
 });
 
-client.initialize();
+// Catch transient startup failures (e.g. "execution context was destroyed"
+// when WhatsApp Web navigates during Puppeteer script injection). Exiting with
+// code 1 lets start.py restart the listener automatically; it usually succeeds
+// on the next attempt.
+client.initialize().catch((err) => {
+  console.error('[init] initialize() failed — exiting for restart:', err.message);
+  process.exit(1);
+});
 
 // Heartbeat: detect silent disconnects (e.g. after PC sleep) where the
 // 'disconnected' event never fires. Polls getState() and triggers a reconnect
