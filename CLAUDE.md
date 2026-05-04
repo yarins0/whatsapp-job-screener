@@ -24,6 +24,13 @@ pytest tests/test_pipeline.py::test_stores_a_qualified_job -v
 # Run Node.js tests (last-seen state module)
 npm test
 
+# Browse stored jobs from the terminal
+python -m agent.list_jobs                    # last 20 jobs (past 7 days)
+python -m agent.list_jobs --days 0           # all time
+python -m agent.list_jobs --role python      # filter by keyword
+python -m agent.list_jobs --unseen           # not yet in a digest
+python -m agent.list_jobs --limit 50
+
 # Live smoke test (requires ANTHROPIC_API_KEY in .env)
 python -m agent.pipeline
 
@@ -67,7 +74,17 @@ On `ready`, the listener reads watched group IDs from `agent/groups.json` (a `{i
 
 ### Telegram bot: `telegram_bot.py`
 
-Long-polls `getUpdates`. Handles inline-button callback queries (`block_role:`, `block_city:`) and text commands: `/help`, `/commands`, `/start`, `/prefs`, `/blockrole`, `/blockcity`, `/addrole`, `/groups`, `/addgroup`, `/removegroup`. All preference and group mutations delegate to `prefs_tool.py` and `groups_tool.py`.
+Long-polls `getUpdates`. Handles inline-button callback queries (`block_role:`, `block_city:`) and text commands: `/help`, `/commands`, `/start`, `/prefs`, `/blockrole`, `/blockcity`, `/addrole`, `/groups`, `/addgroup`, `/removegroup`, `/jobs`. All preference and group mutations delegate to `prefs_tool.py` and `groups_tool.py`. The `/jobs` command delegates to `query_tool.py`.
+
+### Browse jobs: `agent/list_jobs.py` and `agent/tools/query_tool.py`
+
+`query_tool.py` exposes two public functions:
+- `query_jobs(days, role, unseen_only, limit)` — queries the `jobs` table with optional filters; returns a list of dicts ordered newest-first.
+- `format_jobs_telegram(jobs, days, role, unseen_only)` — renders results in the same Markdown style as the daily digest, respecting Telegram's 4096-char message limit.
+
+`list_jobs.py` is the CLI entry point (`python -m agent.list_jobs`). It calls `query_jobs()` and prints a fixed-width terminal table. Flags: `--days N`, `--role KEYWORD`, `--unseen`, `--limit N`.
+
+The Telegram `/jobs` command uses the same `query_jobs()` + `format_jobs_telegram()` path, so both surfaces always produce consistent results from the same query logic.
 
 ### Key design decisions
 
@@ -108,7 +125,7 @@ Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXIS
 
 ### Tests
 
-**Python (74 tests)** — all run offline. `conftest.py` provides:
+**Python (87 tests)** — all run offline. `conftest.py` provides:
 - `temp_db` — creates a fresh isolated DB (all three tables) and sets `JOBS_DB_PATH`
 - `temp_prefs` — writes a minimal `prefs.json` to a temp file and sets `PREFS_PATH`
 - `temp_groups` — writes an empty `groups.json` map to a temp file and sets `GROUPS_PATH`
@@ -119,6 +136,7 @@ Key test patterns:
 - To force combined mode in a pipeline test, insert a row into `group_stats` with `total_messages=100, job_post_messages=95` before calling `run_pipeline`.
 - Stats tool tests use `monkeypatch.setenv("JOBS_DB_PATH", ...)` directly, bypassing the `temp_db` fixture where needed.
 - Telegram bot command tests use `unittest.mock.patch("telegram_bot._send")` to capture replies without making real API calls.
+- Query tool tests use the `temp_db` fixture and insert rows directly via `sqlite3` to avoid going through the pipeline.
 
 **Node.js (7 tests)** — Jest tests for `listener/last_seen.js`. Each test uses a unique tmp file path so tests never touch the real state file.
 
@@ -135,4 +153,4 @@ Copy `.env.example` to `.env` and fill in:
 | `TELEGRAM_BOT_TOKEN` | No | Instant notifications, digest delivery, and bot commands |
 | `TELEGRAM_CHAT_ID` | No | Telegram recipient |
 | `LANGCHAIN_API_KEY` | No | LangSmith tracing |
-| `LANGCHAIN_TRACING_V2` | No | Set to `true` to enable tracing |
+| `LANGCHAIN_TRACING` | No | Set to `true` to enable tracing |

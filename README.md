@@ -132,7 +132,7 @@ Open `.env` in any text editor. The only key you *must* fill in to get started i
 | `TELEGRAM_BOT_TOKEN` | No | Chat with [@BotFather](https://t.me/BotFather) → `/newbot` |
 | `TELEGRAM_CHAT_ID` | No | Message your bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and find `"chat": {"id": ...}` |
 | `LANGCHAIN_API_KEY` | No | Free account at [smith.langchain.com](https://smith.langchain.com) |
-| `LANGCHAIN_TRACING_V2` | No | Set `true` to enable LangSmith tracing |
+| `LANGCHAIN_TRACING` | No | Set `true` to enable LangSmith tracing |
 | `LANGCHAIN_PROJECT` | No | Project name in LangSmith (defaults to `default` if omitted) |
 
 ---
@@ -262,7 +262,7 @@ npm test
 
 ## LangSmith observability
 
-Set `LANGCHAIN_TRACING_V2=true` and `LANGCHAIN_API_KEY` in `.env`. Every chain invocation appears at [smith.langchain.com](https://smith.langchain.com) — you can inspect the exact prompt, LLM response, latency, and token cost per step. Useful for debugging classifier confidence and extractor output.
+Set `LANGCHAIN_TRACING=true` and `LANGCHAIN_API_KEY` in `.env`. Every chain invocation appears at [smith.langchain.com](https://smith.langchain.com) — you can inspect the exact prompt, LLM response, latency, and token cost per step. Useful for debugging classifier confidence and extractor output.
 
 ---
 
@@ -278,6 +278,7 @@ agent/
     classifier.py    LCEL chain: is_job_post + confidence (separate mode)
     extractor.py     LCEL chain: list of JobPost dicts (separate mode)
     combined.py      LCEL chain: classify+extract in one call (combined mode)
+  list_jobs.py       CLI: python -m agent.list_jobs [--days N] [--role KW] [--unseen] [--limit N]
   tools/
     filter_tool.py   Match job against prefs.json
     dedup_tool.py    Hash-based dedup via seen_hashes table
@@ -285,6 +286,7 @@ agent/
     stats_tool.py    Per-group job-post rate tracking; drives adaptive mode
     prefs_tool.py    load_prefs(), add_to_blocklist(), add_to_location_blocklist(), add_to_roles()
     groups_tool.py   load_groups(), add_group(), remove_group()
+    query_tool.py    query_jobs() + format_jobs_telegram(); shared by CLI and /jobs bot command
 
 api/
   main.py            FastAPI: POST /ingest, GET /healthz
@@ -298,6 +300,7 @@ digest/
 
 telegram_bot.py      Long-polls Telegram; handles feedback buttons + /help /commands /prefs
                      /blockrole /blockcity /addrole /groups /addgroup /removegroup
+                     /jobs [keyword] [unseen]
 
 db/
   schema.sql         SQLite schema (jobs, seen_hashes, group_stats)
@@ -317,4 +320,4 @@ tests/
 - **Vector search** — `Chroma` or `FAISS` to find similar jobs you've seen before
 - ~~**Feedback loop**~~ — ✅ implemented: inline buttons on notifications + Telegram commands to manage preferences and groups
 - **Additional sources** — `langchain_community.document_loaders` for Telegram channels or LinkedIn
-- **Browse jobs CLI** — `python -m agent.list_jobs` to review stored jobs from the terminal
+- ~~**Browse jobs CLI**~~ — ✅ implemented: `python -m agent.list_jobs` + `/jobs` Telegram command
