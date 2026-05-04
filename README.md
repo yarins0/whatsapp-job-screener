@@ -79,7 +79,7 @@ WhatsApp Groups
 | WhatsApp listener | Node.js + `whatsapp-web.js` |
 | API / ingest | Python + FastAPI |
 | LLM framework | LangChain (Python) |
-| LLM model | `claude-haiku-4-5-20251001` via `langchain-anthropic` |
+| LLM model | Configurable via `LLM_PROVIDER` + `LLM_MODEL` env vars (default: Claude Haiku) |
 | Database | SQLite (three tables: `jobs`, `seen_hashes`, `group_stats`) |
 | Scheduler | APScheduler |
 | Notifications | Telegram Bot API (falls back to stdout) |
@@ -93,7 +93,7 @@ WhatsApp Groups
 
 - **Python 3.10+** and **Node.js 18+**
 - A phone with WhatsApp installed (to scan the QR code on first run)
-- An [Anthropic API key](https://console.anthropic.com/) — the agent uses Claude Haiku, which is cheap (~$0.001 per message screened)
+- An API key for whichever LLM provider you choose (see [Choosing an LLM](#choosing-an-llm) below)
 - *(Optional)* A Telegram account for instant notifications and the daily digest
 
 ---
@@ -125,19 +125,24 @@ copy .env.example .env   # Windows
 # cp .env.example .env   # Mac / Linux
 ```
 
-Open `.env` in any text editor. The only key you *must* fill in to get started is `ANTHROPIC_API_KEY`.
+Open `.env` in any text editor. Set the API key for whichever LLM provider you choose (see [Choosing an LLM](#choosing-an-llm)).
 
 | Variable | Required | How to get it |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | **Yes** | [console.anthropic.com](https://console.anthropic.com/) → API Keys |
+| `LLM_PROVIDER` | No | `anthropic` (default), `openai`, `google`, or `ollama` |
+| `LLM_MODEL` | No | Model name for your provider (see [Choosing an LLM](#choosing-an-llm)) |
+| `ANTHROPIC_API_KEY` | If using Anthropic | [console.anthropic.com](https://console.anthropic.com/) → API Keys |
+| `OPENAI_API_KEY` | If using OpenAI | [platform.openai.com](https://platform.openai.com/) → API Keys |
+| `GOOGLE_API_KEY` | If using Google | [aistudio.google.com](https://aistudio.google.com/) → Get API key |
 | `TELEGRAM_BOT_TOKEN` | No | Chat with [@BotFather](https://t.me/BotFather) → `/newbot` |
 | `TELEGRAM_CHAT_ID` | No | Message your bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and find `"chat": {"id": ...}` |
 | `TELEGRAM_API_ID` | No (Telegram source) | [my.telegram.org](https://my.telegram.org) → API Development Tools → your app's `api_id` |
 | `TELEGRAM_API_HASH` | No (Telegram source) | Same page — your app's `api_hash` |
 | `TELEGRAM_PHONE` | No (Telegram source) | Your phone number, e.g. `+972501234567` |
-| `LANGCHAIN_API_KEY` | No | Free account at [smith.langchain.com](https://smith.langchain.com) |
-| `LANGCHAIN_TRACING` | No | Set `true` to enable LangSmith tracing |
-| `LANGCHAIN_PROJECT` | No | Project name in LangSmith (defaults to `default` if omitted) |
+| `LANGSMITH_API_KEY` | No | Free account at [smith.langchain.com](https://smith.langchain.com) |
+| `LANGSMITH_TRACING` | No | Set `true` to enable LangSmith tracing |
+| `LANGSMITH_ENDPOINT` | No | `https://api.smith.langchain.com` (default, rarely needs changing) |
+| `LANGSMITH_PROJECT` | No | Project name in LangSmith (defaults to `default` if omitted) |
 
 ---
 
@@ -283,14 +288,50 @@ npm test
 
 ---
 
+## Choosing an LLM
+
+Set `LLM_PROVIDER` and optionally `LLM_MODEL` in your `.env`. Then install the matching package and set its API key.
+
+| Provider | `LLM_PROVIDER` | Default model | Package to install | API key var |
+|---|---|---|---|---|
+| Anthropic (default) | `anthropic` | `claude-haiku-4-5-20251001` | `langchain-anthropic` | `ANTHROPIC_API_KEY` |
+| OpenAI | `openai` | `gpt-4o-mini` | `langchain-openai` | `OPENAI_API_KEY` |
+| Google Gemini | `google` | `gemini-2.0-flash` | `langchain-google-genai` | `GOOGLE_API_KEY` |
+| Ollama (local) | `ollama` | `llama3.2` | `langchain-ollama` | *(none — run Ollama locally)* |
+
+**Example — switch to OpenAI:**
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o-mini
+OPENAI_API_KEY=sk-...
+```
+```bash
+pip install langchain-openai
+```
+
+**Example — run fully locally with Ollama:**
+```env
+LLM_PROVIDER=ollama
+LLM_MODEL=llama3.2
+```
+```bash
+pip install langchain-ollama
+ollama pull llama3.2
+```
+
+If `LLM_PROVIDER` is not set, the agent defaults to Anthropic Claude Haiku.
+
+---
+
 ## LangSmith observability
 
-Set these two variables in `.env` to enable tracing:
+Set these variables in `.env` to enable tracing:
 
 ```
-LANGCHAIN_TRACING=true
-LANGCHAIN_API_KEY=<your key from smith.langchain.com>
-LANGCHAIN_PROJECT=job-screener   # optional — groups traces in the UI
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=<your key from smith.langchain.com>
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_PROJECT=job-screener   # optional — groups traces in the UI
 ```
 
 Every chain invocation (classifier, extractor, combined) is then visible at [smith.langchain.com](https://smith.langchain.com) with the exact prompt sent, the raw LLM response, latency, and token cost per step.

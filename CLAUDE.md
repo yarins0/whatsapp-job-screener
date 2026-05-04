@@ -146,7 +146,11 @@ Copy `.env.example` to `.env` and fill in:
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Yes (live only) | Claude API access |
+| `LLM_PROVIDER` | No | `anthropic` (default), `openai`, `google`, or `ollama` |
+| `LLM_MODEL` | No | Model name — defaults to provider's cheapest/fastest model |
+| `ANTHROPIC_API_KEY` | If using Anthropic | Claude API access |
+| `OPENAI_API_KEY` | If using OpenAI | OpenAI API access |
+| `GOOGLE_API_KEY` | If using Google | Gemini API access |
 | `JOBS_DB_PATH` | No | Override DB path (defaults to `db/jobs.db`) |
 | `PREFS_PATH` | No | Override prefs file path (defaults to `agent/prefs.json`) |
 | `GROUPS_PATH` | No | Override WhatsApp sources file path (defaults to `agent/whatsapp_sources.json`) |
@@ -156,5 +160,7 @@ Copy `.env.example` to `.env` and fill in:
 | `TELEGRAM_API_HASH` | No (Telegram source) | Same page as `TELEGRAM_API_ID` |
 | `TELEGRAM_PHONE` | No (Telegram source) | Phone number for the Telethon userbot, e.g. `+972501234567` |
 | `WEB_SCRAPER_INTERVAL_MINUTES` | No | Web scraper poll interval (default: 30) |
-| `LANGCHAIN_API_KEY` | No | LangSmith tracing |
-| `LANGCHAIN_TRACING` | No | Set to `true` to enable tracing |
+| `LANGSMITH_API_KEY` | No | LangSmith tracing |
+| `LANGSMITH_TRACING` | No | Set to `true` to enable tracing |
+| `LANGSMITH_ENDPOINT` | No | LangSmith API endpoint (defaults to `https://api.smith.langchain.com`) |
+| `LANGSMITH_PROJECT` | No | LangSmith project name (defaults to `default`) |
