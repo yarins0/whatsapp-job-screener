@@ -13,8 +13,8 @@
 
 ```bash
 # Clone the repo
-git clone <repo-url>
-cd job-screening-agent
+git clone https://github.com/yarins0/whatsapp-job-screener.git
+cd whatsapp-job-screener
 
 # Python environment
 python -m venv venv

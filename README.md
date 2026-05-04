@@ -76,13 +76,15 @@ WhatsApp Groups
 
 | Layer | Technology |
 |---|---|
-| WhatsApp listener | Node.js + `whatsapp-web.js` |
+| WhatsApp source | Node.js + `whatsapp-web.js` — QR auth, catch-up replay, heartbeat |
+| Telegram source | Python + Telethon userbot — watches channels, catch-up replay |
+| Web scraper source | Python + `langchain-community` `WebBaseLoader` + BeautifulSoup |
 | API / ingest | Python + FastAPI |
 | LLM framework | LangChain (Python) |
-| LLM model | Configurable via `LLM_PROVIDER` + `LLM_MODEL` env vars (default: Claude Haiku) |
-| Database | SQLite (three tables: `jobs`, `seen_hashes`, `group_stats`) |
-| Scheduler | APScheduler |
-| Notifications | Telegram Bot API (falls back to stdout) |
+| LLM model | Configurable via `LLM_PROVIDER` + `LLM_MODEL` (default: Claude Haiku) |
+| Database | SQLite — `jobs`, `seen_hashes`, `group_stats` |
+| Scheduler | APScheduler — daily digest + web scraper polling |
+| Telegram bot | `python-telegram-bot`-style long-polling — commands + inline buttons |
 | Observability | LangSmith (free tier) |
 
 ---
