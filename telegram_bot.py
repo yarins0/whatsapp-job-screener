@@ -123,6 +123,7 @@ def _handle_message(msg: dict) -> None:
             "When a new job is stored you'll get an instant notification with two buttons:\n"
             "  • Block role — never see this type of job again\n"
             "  • Block city — skip jobs in that city\n\n"
+            "Use /jobs to browse stored jobs, or /jobs python to filter by keyword.\n\n"
             "You can also manage your preferences any time using text commands.\n\n"
             "For a full list of commands, use /commands."
         ))
@@ -130,6 +131,10 @@ def _handle_message(msg: dict) -> None:
     elif text.startswith("/start") or text.startswith("/commands"):
         _send(chat_id, (
             "Job Screener Bot — available commands:\n\n"
+            "Jobs:\n"
+            "/jobs — recent jobs (last 7 days)\n"
+            "/jobs <keyword> — filter by keyword\n"
+            "/jobs <keyword> unseen — keyword + unseen only\n\n"
             "Preferences:\n"
             "/prefs — show current roles, blocklist, and blocked cities\n"
             "/blockrole <keyword> — add a keyword to the role blocklist\n"
@@ -141,6 +146,23 @@ def _handle_message(msg: dict) -> None:
             "/removegroup <id> — stop watching a group\n\n"
             "You can also tap the Block role / Block city buttons on any job notification."
         ))
+
+    elif text.startswith("/jobs"):
+        from agent.tools.query_tool import format_jobs_telegram, query_jobs
+
+        # Parse optional arguments: /jobs [keyword] [unseen]
+        # Examples: /jobs  /jobs python  /jobs python unseen  /jobs unseen
+        raw_args = text[len("/jobs"):].strip().lower().split()
+        unseen_only = "unseen" in raw_args
+        role_parts = [a for a in raw_args if a != "unseen"]
+        role = " ".join(role_parts) if role_parts else None
+
+        try:
+            jobs = query_jobs(days=7, role=role, unseen_only=unseen_only, limit=10)
+            reply = format_jobs_telegram(jobs, days=7, role=role, unseen_only=unseen_only)
+        except Exception as exc:
+            reply = f"Could not query jobs: {exc}"
+        _send(chat_id, reply)
 
     elif text.startswith("/prefs"):
         try:
