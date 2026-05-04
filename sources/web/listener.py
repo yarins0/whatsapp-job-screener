@@ -70,7 +70,17 @@ def _is_enabled(config: dict, scraper_key: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _forward(text: str, source_name: str) -> None:
-    """POST a scraped job listing to the FastAPI ingest endpoint."""
+    """POST a scraped job listing to the FastAPI ingest endpoint.
+
+    Checks the raw-text hash against seen_hashes before POSTing so that
+    listings seen in a previous poll cycle never reach the LLM again.
+    """
+    from agent.tools.dedup_tool import is_raw_duplicate
+
+    if is_raw_duplicate(text):
+        logger.debug("Skipping already-seen listing from %s (raw dedup).", source_name)
+        return
+
     try:
         requests.post(
             API_URL,

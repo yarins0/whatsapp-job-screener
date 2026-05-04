@@ -20,7 +20,7 @@ from sources.web.scrapers.base import JobScraper
 
 logger = logging.getLogger(__name__)
 
-_SEARCH_URL = "https://www.alljobs.co.il/SearchResult.aspx?pos={keyword}&region=0&type=0&from=0"
+_SEARCH_URL = "https://www.alljobs.co.il/SearchResultsGuest.aspx?page=1&position=&type=&freetxt={keyword}&city=&region="
 
 
 class AllJobsScraper(JobScraper):
@@ -81,15 +81,10 @@ def _parse_cards(page_text: str, BeautifulSoup, source_url: str) -> list[str]:
 
     soup = BeautifulSoup(resp.text, "lxml")
 
-    # AllJobs renders job listings inside elements with class "job-content" or
-    # inside <div class="cjob"> containers. Adjust if markup changes.
-    # Try multiple selector strategies to be resilient.
-    cards = (
-        soup.select(".cjob-content") or
-        soup.select(".job-content") or
-        soup.select("[class*='job-item']") or
-        soup.select("article")
-    )
+    # AllJobs renders each listing inside a .job-box div.
+    # Deleted listings have a .job-delete-details element but no .job-content-top-title.
+    all_boxes = soup.select(".job-box")
+    cards = [c for c in all_boxes if c.select_one(".job-content-top-title")]
 
     if not cards:
         logger.warning("AllJobs: no job cards found — selectors may need updating.")

@@ -23,18 +23,38 @@ def _hash(job: dict) -> str:
     return hashlib.md5(key.lower().encode("utf-8")).hexdigest()
 
 
+def _raw_hash(text: str) -> str:
+    # Prefix avoids any collision with the structured _hash namespace.
+    return "raw:" + hashlib.md5(text.strip().encode("utf-8")).hexdigest()
+
+
+def _check_and_record(hash_val: str) -> bool:
+    """Insert hash into seen_hashes. Returns True if it was already there (duplicate)."""
+    db = _db_path()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db)
+    try:
+        cur = conn.cursor()
+        cur.execute("INSERT OR IGNORE INTO seen_hashes (hash) VALUES (?)", (hash_val,))
+        conn.commit()
+        return cur.rowcount == 0
+    finally:
+        conn.close()
+
+
+def is_raw_duplicate(text: str) -> bool:
+    """Return True if this raw text has been seen before. Records it on first sight.
+
+    Used by web scrapers to deduplicate before any LLM call — much cheaper than
+    letting the pipeline discover the duplicate post-extraction.
+    """
+    return _check_and_record(_raw_hash(text))
+
+
 def is_duplicate(job: dict) -> bool:
     """Return True if we've seen this job before. Records it on first sight."""
     hash_val = _hash(job)
     db = _db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(db)
-    try:
-        cur = conn.cursor()
-        # INSERT OR IGNORE is atomic — eliminates the SELECT+INSERT race condition.
-        cur.execute("INSERT OR IGNORE INTO seen_hashes (hash) VALUES (?)", (hash_val,))
-        conn.commit()
-        return cur.rowcount == 0  # 0 rows inserted → already existed → duplicate
-    finally:
-        conn.close()
+    return _check_and_record(hash_val)

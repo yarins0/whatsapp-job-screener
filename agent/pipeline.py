@@ -79,12 +79,27 @@ async def run_pipeline(
     llm = llm or _default_llm()
     group: str = message.get("group") or ""
 
-    # Choose pipeline mode based on this group's historical job-post rate.
-    # "combined" runs classify+extract in one LLM call; "separate" runs them
-    # sequentially. Falls back to "separate" on any DB error.
-    mode = get_pipeline_mode(group)
+    sender: str = message.get("sender") or ""
 
-    if mode == "combined":
+    if sender == "web-scraper":
+        # Web-scraped listings are guaranteed to be job posts — skip classification
+        # and go straight to extraction. Saves one LLM call per listing.
+        extractor = build_extractor_chain(llm)
+        raw = await extractor.ainvoke({"message": text})
+        jobs: list[dict] = raw if isinstance(raw, list) else [raw]
+        is_job = True
+        confidence = 1.0
+        record_message(group, True)
+    else:
+        # Choose pipeline mode based on this group's historical job-post rate.
+        # "combined" runs classify+extract in one LLM call; "separate" runs them
+        # sequentially. Falls back to "separate" on any DB error.
+        mode = get_pipeline_mode(group)
+        jobs = []
+        is_job = False
+        confidence = 0.0
+
+    if sender != "web-scraper" and mode == "combined":
         # Single LLM call: classify and extract simultaneously.
         try:
             combined_chain = build_combined_chain(llm)
@@ -98,7 +113,7 @@ async def run_pipeline(
             logger.warning("Combined chain failed (%s) — falling back to separate mode", exc)
             mode = "separate"
 
-    if mode == "separate":
+    if sender != "web-scraper" and mode == "separate":
         # 1. Classify
         classifier = build_classifier_chain(llm)
         classification = await classifier.ainvoke({"message": text})
@@ -114,8 +129,9 @@ async def run_pipeline(
         else:
             jobs = []
 
-    # Record stats now that we know whether this message was a job post.
-    record_message(group, is_job and confidence >= CONFIDENCE_THRESHOLD)
+    # Record stats for non-web messages (web-scraper path records inline above).
+    if sender != "web-scraper":
+        record_message(group, is_job and confidence >= CONFIDENCE_THRESHOLD)
 
     if not is_job or confidence < CONFIDENCE_THRESHOLD:
         return PipelineResult(

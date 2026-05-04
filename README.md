@@ -203,13 +203,28 @@ Press `Ctrl+C` to stop. Auth is saved to `sources/whatsapp/.wwebjs_auth/` — yo
 
 ### Step 5 — Initialize the database
 
+
 ```bash
 python -m db.init_db
 ```
 
 ---
 
-### Step 6 — Start the agent
+### Step 6 — Authenticate the Telegram source listener (first run only)
+
+> Skip this step if you are not using the Telegram source (`TELEGRAM_API_ID/HASH/PHONE` not set).
+
+`start.py` launches all processes without a stdin, so Telethon cannot prompt for the login code interactively. Run the listener once in its own terminal to authenticate:
+
+```bash
+python -m sources.telegram.listener
+```
+
+Enter the code sent to your Telegram account when prompted. Once you see `Telegram source listener started`, press `Ctrl+C`. The session is saved to `sources/telegram/.session` and will be reused automatically — you will not need to do this again unless the session expires.
+
+---
+
+### Step 7 — Start the agent
 
 ```bash
 python start.py

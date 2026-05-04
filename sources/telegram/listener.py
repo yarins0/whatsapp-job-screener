@@ -140,6 +140,20 @@ async def run_listener() -> None:
         )
         return
 
+    # Telethon calls input() interactively when no session file exists, which
+    # fails when launched as a subprocess (no stdin). Detect this upfront and
+    # exit with a clear message so start.py doesn't crash-loop.
+    # Telethon saves the session as either "<name>.session" or just "<name>"
+    # depending on the version. Check both.
+    session_path = SESSION_FILE if SESSION_FILE.exists() else Path(str(SESSION_FILE) + ".session")
+    if not session_path.exists():
+        logger.error(
+            "No Telegram session found. Run once interactively to authenticate:\n"
+            "  python -m sources.telegram.listener\n"
+            "Then restart start.py."
+        )
+        return
+
     client = TelegramClient(str(SESSION_FILE), int(api_id), api_hash)
 
     @client.on(events.NewMessage(chats=list(sources.keys())))
