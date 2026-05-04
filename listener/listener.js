@@ -178,8 +178,13 @@ const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 
 // --- client ----------------------------------------------------------------
 
+// WhatsApp derives the linked-device name from the user agent string.
+// A Windows Chrome UA makes the device appear as "Chrome (Windows)" in the
+// WhatsApp app's linked-devices list instead of the default "Chrome (Mac OS)"
+// that Puppeteer's bundled Chromium reports.
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: 'listener/.wwebjs_auth' }),
+  userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   puppeteer: {
     args: ['--no-sandbox'],
     protocolTimeout: 60000, // 60s — getChats() on large accounts can be slow
