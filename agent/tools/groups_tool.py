@@ -1,7 +1,7 @@
 """Groups tool — read and write the list of watched WhatsApp group IDs.
 
-Groups are stored in agent/groups.json as a JSON object mapping group ID to
-display name: {"120363XXXXXXXXXX@g.us": "Group Name", ...}.
+Groups are stored in agent/whatsapp_sources.json as a JSON object mapping
+group ID to display name: {"120363XXXXXXXXXX@g.us": "Group Name", ...}.
 
 The name starts as an empty string and is filled in by the listener on each
 startup. The file path can be overridden with the GROUPS_PATH environment
@@ -28,7 +28,7 @@ def _groups_path() -> Path:
     if env:
         return Path(env)
     # agent/tools/groups_tool.py  →  .parent = agent/tools  →  .parent = agent
-    return Path(__file__).resolve().parent.parent / "groups.json"
+    return Path(__file__).resolve().parent.parent / "whatsapp_sources.json"
 
 
 def _read() -> dict[str, str]:
