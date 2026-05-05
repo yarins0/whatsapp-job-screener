@@ -190,6 +190,7 @@ Copy `.env.example` to `.env` and fill in:
 | `PREFS_PATH` | No | Override prefs file path (defaults to `agent/prefs.json`) |
 | `GROUPS_PATH` | No | Override WhatsApp sources file path (defaults to `agent/whatsapp_sources.json`) |
 | `CHROMA_DB_PATH` | No | Override ChromaDB persistence directory (defaults to `db/chroma`) |
+| `DUPLICATE_WINDOW_DAYS` | No | How many days back to look for same-title+company duplicates (default: 7) |
 | `TELEGRAM_BOT_TOKEN` | No | Instant notifications, digest delivery, and bot commands |
 | `TELEGRAM_CHAT_ID` | No | Telegram recipient |
 | `TELEGRAM_API_ID` | No (Telegram source) | From [my.telegram.org](https://my.telegram.org) → API Development Tools |

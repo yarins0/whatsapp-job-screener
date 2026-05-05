@@ -21,11 +21,11 @@ def store_job(job: dict) -> int | None:
     """Insert ``job`` into the ``jobs`` table and the vector index.
 
     Returns the new SQLite row id, or None if the job is suppressed as a
-    near-duplicate of an already-indexed job (vector similarity dedup).
+    time-duplicate (same title + company stored within the last 7 days).
     """
-    if _try_is_near_duplicate(job):
+    if _try_is_time_duplicate(job):
         logger.info(
-            "Skipping near-duplicate job title=%r company=%r",
+            "Skipping time-duplicate job title=%r company=%r",
             job.get("title"),
             job.get("company"),
         )
@@ -67,16 +67,16 @@ def store_job(job: dict) -> int | None:
     return row_id
 
 
-def _try_is_near_duplicate(job: dict) -> bool:
-    """Return True if the vector store considers job a near-duplicate.
+def _try_is_time_duplicate(job: dict) -> bool:
+    """Return True if the same role at the same company was stored within 7 days.
 
-    Errors are non-fatal — if Chroma is unavailable, the job is not suppressed.
+    Errors are non-fatal — if the DB is unavailable, the job is not suppressed.
     """
     try:
-        from agent.vector_store import is_near_duplicate
-        return is_near_duplicate(job)
+        from agent.tools.dedup_tool import is_time_duplicate
+        return is_time_duplicate(job.get("title"), job.get("company"))
     except Exception as exc:
-        logger.warning("vector_store.is_near_duplicate failed: %s", exc)
+        logger.warning("dedup_tool.is_time_duplicate failed: %s", exc)
         return False
 
 
