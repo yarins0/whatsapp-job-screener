@@ -36,3 +36,6 @@ db/*.db-journal
 # Claude Code
 .claude/
 .gstack/
+
+# Local notes
+TODO.md

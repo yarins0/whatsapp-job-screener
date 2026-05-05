@@ -156,42 +156,73 @@ async def run_listener() -> None:
 
     client = TelegramClient(str(SESSION_FILE), int(api_id), api_hash)
 
-    @client.on(events.NewMessage(chats=list(sources.keys())))
+    await client.start(phone=phone)
+
+    # Resolve every configured source to a real Telegram entity now, before
+    # registering the event handler. Passing raw strings (usernames / IDs) to
+    # events.NewMessage and letting Telethon resolve them lazily at dispatch time
+    # causes an unhandled exception in _dispatch_update when a username doesn't
+    # exist. Pre-resolving gives us a clean log warning and keeps the listener
+    # running for all valid sources.
+    resolved: list[tuple[object, str]] = []  # (entity, display_name)
+    for key, display_name in sources.items():
+        try:
+            entity = await client.get_entity(key)
+            name = display_name or getattr(entity, "title", None) or key
+            resolved.append((entity, name))
+            logger.info("[source] Resolved %r → %s (id=%d)", key, name, entity.id)
+        except Exception as exc:
+            logger.warning(
+                "[source] Could not resolve source %r — skipping. %s: %s",
+                key, type(exc).__name__, exc,
+            )
+
+    if not resolved:
+        logger.error(
+            "[source] No valid Telegram sources could be resolved — shutting down. "
+            "Check that the usernames/IDs in agent/telegram_sources.json are correct."
+        )
+        await client.disconnect()
+        return
+
+    # Build a fast id→name lookup used inside the event handler.
+    entity_names: dict[int, str] = {entity.id: name for entity, name in resolved}
+    entity_objects = [entity for entity, _ in resolved]
+
+    logger.info("Telegram source listener started — watching %d source(s).", len(resolved))
+
+    @client.on(events.NewMessage(chats=entity_objects))
     async def _on_message(event) -> None:
         text = event.message.message
         if not text:
             return  # skip media-only messages
         chat = await event.get_chat()
-        source_name = sources.get(str(chat.id)) or sources.get(getattr(chat, "username", "")) or chat.title or str(chat.id)
+        source_name = entity_names.get(chat.id) or getattr(chat, "title", None) or str(chat.id)
         timestamp = int(event.message.date.timestamp())
         _forward(text, source_name, timestamp)
         _update_last_seen(str(chat.id), timestamp)
         logger.info("Forwarded message from %s", source_name)
 
-    await client.start(phone=phone)
-    logger.info("Telegram source listener started — watching %d source(s).", len(sources))
-
-    # Catch up on messages missed since last run.
+    # Catch up on messages missed since last run using the already-resolved entities.
     cutoff = int(time.time()) - CATCHUP_MAX_AGE_S
     last_seen = _load_last_seen()
 
-    for channel_id, display_name in sources.items():
-        since = max(last_seen.get(str(channel_id), 0), cutoff)
+    for entity, source_name in resolved:
+        entity_id = str(entity.id)
+        since = max(last_seen.get(entity_id, 0), cutoff)
         since_dt = datetime.fromtimestamp(since, tz=timezone.utc)
         try:
-            entity = await client.get_entity(channel_id)
-            source_name = display_name or getattr(entity, "title", channel_id)
             messages = await client.get_messages(entity, limit=100, offset_date=since_dt, reverse=True)
             missed = [m for m in messages if m.message and int(m.date.timestamp()) > since]
             if missed:
                 logger.info("[catch-up] %s: replaying %d missed message(s)", source_name, len(missed))
                 for m in missed:
                     _forward(m.message, source_name, int(m.date.timestamp()))
-                _update_last_seen(str(entity.id), int(missed[-1].date.timestamp()))
+                _update_last_seen(entity_id, int(missed[-1].date.timestamp()))
             else:
                 logger.info("[catch-up] %s: no missed messages", source_name)
         except Exception as exc:
-            logger.warning("[catch-up] Could not catch up on %s: %s", channel_id, exc)
+            logger.warning("[catch-up] Could not catch up on %s — skipping. %s: %s", source_name, type(exc).__name__, exc)
 
     logger.info("Ready — listening for new Telegram messages.")
     await client.run_until_disconnected()

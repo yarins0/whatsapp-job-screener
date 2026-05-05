@@ -127,7 +127,7 @@ async function catchUp(groupId, snapshotTimestamp) {
   try {
     chat = await client.getChatById(groupId);
   } catch (err) {
-    console.error(`[catch-up] Could not get chat ${groupId}:`, err.message);
+    console.warn(`[catch-up] Could not resolve group ${groupId} — skipping. ${err.message}`);
     return;
   }
 
