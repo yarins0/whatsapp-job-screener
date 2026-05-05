@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s — %(message)s")
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "db" / "jobs.db"

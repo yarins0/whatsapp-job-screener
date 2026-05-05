@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s — %(message)s")
 # APScheduler logs "Running job" and "Job executed successfully" on every poll tick — not useful.
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
 

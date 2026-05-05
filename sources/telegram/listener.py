@@ -35,7 +35,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s — %(message)s")
 logging.getLogger("telethon").setLevel(logging.WARNING)
 
 # ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ async def run_listener() -> None:
             entity = await client.get_entity(key)
             name = display_name or getattr(entity, "title", None) or key
             resolved.append((entity, name))
-            logger.info("[source] Resolved %r → %s (id=%d)", key, name, entity.id)
+
         except Exception as exc:
             logger.warning(
                 "[source] Could not resolve source %r — skipping. %s: %s",
