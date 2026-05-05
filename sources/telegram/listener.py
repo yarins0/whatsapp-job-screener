@@ -178,11 +178,16 @@ async def run_listener() -> None:
             )
 
     if not resolved:
+        # All configured sources failed to resolve — bad IDs or usernames.
+        # Do NOT exit: exiting would cause start.py to restart in a loop and
+        # spam the logs. Stay alive (idle) so the operator can fix the IDs
+        # in agent/telegram_sources.json and then do a clean restart.
         logger.error(
-            "[source] No valid Telegram sources could be resolved — shutting down. "
-            "Check that the usernames/IDs in agent/telegram_sources.json are correct."
+            "[source] None of the configured sources could be resolved. "
+            "Fix the usernames/IDs in agent/telegram_sources.json, then restart. "
+            "Waiting idle — not listening for any messages."
         )
-        await client.disconnect()
+        await client.run_until_disconnected()
         return
 
     # Build a fast id→name lookup used inside the event handler.

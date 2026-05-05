@@ -61,15 +61,15 @@ def _default_llm() -> BaseLanguageModel:
         return ChatAnthropic(model=model or "claude-haiku-4-5-20251001", temperature=0)
 
     if provider == "openai":
-        from langchain_openai import ChatOpenAI
+        from langchain_openai import ChatOpenAI  # type: ignore[import-not-found]
         return ChatOpenAI(model=model or "gpt-4o-mini", temperature=0)
 
     if provider == "google":
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_google_genai import ChatGoogleGenerativeAI  # type: ignore[import-not-found]
         return ChatGoogleGenerativeAI(model=model or "gemini-2.0-flash", temperature=0)
 
     if provider == "ollama":
-        from langchain_ollama import ChatOllama
+        from langchain_ollama import ChatOllama  # type: ignore[import-not-found]
         return ChatOllama(model=model or "llama3.2", temperature=0)
 
     raise ValueError(

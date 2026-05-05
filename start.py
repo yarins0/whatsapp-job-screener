@@ -38,6 +38,24 @@ def stream(proc: subprocess.Popen, label: str) -> None:
 
 LISTENER_RESTART_DELAY = 8  # seconds to wait before restarting the listener
 
+class _NullProc:
+    """Stand-in for a process that exited cleanly and should not be restarted.
+
+    poll() always returns None so the restart loop treats it as still running.
+    """
+
+    returncode: int = 0
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        pass
+
+    def wait(self):
+        pass
+
+
 def main() -> None:
     python = sys.executable  # same venv Python that's running this script
 
@@ -82,8 +100,14 @@ def main() -> None:
         while True:
             for i, (proc, (label, cmd, auto_restart)) in enumerate(zip(procs, process_specs)):
                 if proc.poll() is not None:
-                    if auto_restart:
-                        print(f"\n[start] '{label}' exited (code {proc.returncode}). "
+                    if proc.returncode == 0:
+                        # Clean exit — the process decided there was nothing to do
+                        # (e.g. no sources configured, no session file). Don't restart.
+                        print(f"\n[start] '{label}' exited cleanly (code 0). Not restarting.")
+                        # Replace with a sentinel that never exits so the loop ignores it.
+                        procs[i] = _NullProc()
+                    elif auto_restart:
+                        print(f"\n[start] '{label}' crashed (code {proc.returncode}). "
                               f"Restarting in {LISTENER_RESTART_DELAY}s...")
                         time.sleep(LISTENER_RESTART_DELAY)
                         procs[i] = spawn(label, cmd)
