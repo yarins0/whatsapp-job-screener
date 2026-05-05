@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agent.vector_store import _make_document, find_similar, index_job, is_near_duplicate
+from agent.vector_store import _make_document, find_similar, index_job, is_near_duplicate, reindex_all
 
 
 # ---------------------------------------------------------------------------
@@ -328,3 +328,58 @@ def test_store_job_skips_near_duplicate(temp_db, temp_chroma):
         result = store_job(job)
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# reindex_all
+# ---------------------------------------------------------------------------
+
+def test_reindex_all_empty_db_returns_zero(temp_db, temp_chroma, fake_ef):
+    """When the jobs table is empty, reindex_all should process zero rows."""
+    count = reindex_all(embedding_fn=fake_ef)
+    assert count == 0
+
+
+def test_reindex_all_indexes_existing_jobs(temp_db, temp_chroma, fake_ef):
+    """reindex_all should index every row already in the jobs table."""
+    import chromadb
+
+    db_path = Path(temp_db)
+    conn = sqlite3.connect(db_path)
+    for i in range(3):
+        conn.execute(
+            "INSERT INTO jobs (title, company, summary, seen) VALUES (?, ?, ?, 0)",
+            (f"Job {i}", "Corp", f"Description {i}"),
+        )
+    conn.commit()
+    conn.close()
+
+    count = reindex_all(embedding_fn=fake_ef)
+    assert count == 3
+
+    # Confirm all three documents are in the Chroma collection.
+    import chromadb as _chromadb
+    client = _chromadb.PersistentClient(path=str(temp_chroma))
+    col = client.get_or_create_collection("jobs", embedding_function=fake_ef)
+    assert col.count() == 3
+
+
+def test_reindex_all_is_idempotent(temp_db, temp_chroma, fake_ef):
+    """Running reindex_all twice must not create duplicate entries."""
+    import chromadb as _chromadb
+
+    db_path = Path(temp_db)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO jobs (title, company, summary, seen) VALUES (?, ?, ?, 0)",
+        ("Developer", "Acme", "Build things"),
+    )
+    conn.commit()
+    conn.close()
+
+    reindex_all(embedding_fn=fake_ef)
+    reindex_all(embedding_fn=fake_ef)
+
+    client = _chromadb.PersistentClient(path=str(temp_chroma))
+    col = client.get_or_create_collection("jobs", embedding_function=fake_ef)
+    assert col.count() == 1

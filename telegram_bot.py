@@ -189,7 +189,8 @@ def _handle_message(msg: dict) -> None:
                 "/jobs <keyword> — filter by keyword\n"
                 "/jobs <keyword> unseen — keyword + unseen only\n"
                 "/ask <question> — natural-language search (e.g. remote Python jobs this week)\n"
-                "/similar <text> — find semantically similar jobs (e.g. Python backend FastAPI)\n\n"
+                "/similar <text> — find semantically similar jobs (e.g. Python backend FastAPI)\n"
+                "/reindex — re-index all stored jobs in the vector store\n\n"
                 "Preferences:\n"
                 "/prefs — show current roles, blocklist, and blocked cities\n"
                 "/blockrole <keyword> — add a keyword to the role blocklist\n"
@@ -306,6 +307,19 @@ def _handle_message(msg: dict) -> None:
             logger.warning("find_similar failed: %s", exc)
             reply = f"Could not search for similar jobs: {exc}"
         _send(chat_id, reply)
+
+    elif text.startswith("/reindex"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
+        from agent.vector_store import reindex_all
+        _send(chat_id, "Re-indexing all stored jobs… this may take a moment.")
+        try:
+            count = reindex_all()
+            _send(chat_id, f"Done. {count} job{'s' if count != 1 else ''} indexed.")
+        except Exception as exc:
+            logger.warning("reindex_all failed: %s", exc)
+            _send(chat_id, f"Re-index failed: {exc}")
 
     elif text.startswith("/prefs"):
         try:

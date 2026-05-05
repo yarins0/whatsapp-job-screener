@@ -139,6 +139,49 @@ def _fetch_jobs_by_ids(ids: list[str]) -> list[dict]:
 # Public API
 # ---------------------------------------------------------------------------
 
+def reindex_all(*, embedding_fn=None) -> int:
+    """Upsert every job in the SQLite database into the Chroma collection.
+
+    Safe to run multiple times — Chroma upserts by id, so re-indexing is
+    idempotent and never creates duplicates.  Jobs that are already in the
+    index are simply refreshed.
+
+    Args:
+        embedding_fn: optional embedding function override (for tests).
+
+    Returns:
+        The number of jobs processed.
+    """
+    if not _CHROMA_AVAILABLE:
+        logger.warning("chromadb is not installed — reindex_all() is a no-op.")
+        return 0
+
+    db = _db_path()
+    if not db.exists():
+        return 0
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT id, title, company, summary, skills FROM jobs"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    for row in rows:
+        job = dict(row)
+        if isinstance(job.get("skills"), str):
+            try:
+                job["skills"] = json.loads(job["skills"])
+            except Exception:
+                job["skills"] = []
+        index_job(job["id"], job, embedding_fn=embedding_fn)
+
+    logger.info("reindex_all: indexed %d jobs", len(rows))
+    return len(rows)
+
+
 def index_job(job_id: int, job: dict, *, embedding_fn=None) -> None:
     """Embed a job and upsert it into the Chroma collection.
 
