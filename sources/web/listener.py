@@ -29,7 +29,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s — %(message)s")
+for _lvl, _name in [(10, "debug"), (20, "info"), (30, "warning"), (40, "error"), (50, "critical")]:
+    logging.addLevelName(_lvl, _name)
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s][%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 # APScheduler logs "Running job" and "Job executed successfully" on every poll tick — not useful.
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
@@ -140,11 +142,7 @@ def poll() -> None:
 
 def run() -> None:
     """Start the blocking scheduler. Runs poll() immediately then every N minutes."""
-    logger.info(
-        "Web source listener started — polling every %d minute(s). "
-        "Sources: AllJobs (enabled), Indeed (check web_sources.json).",
-        INTERVAL_MINUTES,
-    )
+    logger.info("Web source listener started — polling every %d minute(s)", INTERVAL_MINUTES)
     # Run once immediately so new listings appear without waiting a full interval.
     poll()
 

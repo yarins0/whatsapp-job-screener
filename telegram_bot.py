@@ -46,7 +46,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s — %(message)s")
+for _lvl, _name in [(10, "debug"), (20, "info"), (30, "warning"), (40, "error"), (50, "critical")]:
+    logging.addLevelName(_lvl, _name)
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s][%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 
 POLL_TIMEOUT = 30  # seconds for each long-poll request
 
@@ -543,7 +545,7 @@ def run_bot() -> None:
         return
 
     offset = 0
-    logger.info("Telegram bot started (long-polling).")
+    logger.info("Telegram bot started")
 
     while True:
         try:

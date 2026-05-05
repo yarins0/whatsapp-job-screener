@@ -36,7 +36,7 @@ function loadGroups() {
     const parsed = JSON.parse(raw);
     return Object.keys(parsed).filter(Boolean);
   } catch (err) {
-    console.warn('[groups] Could not read groups.json:', err.message);
+    log('warning', `[groups] Could not read groups.json: ${err.message}`);
     return [];
   }
 }
@@ -56,14 +56,14 @@ async function saveGroupNames(groupIds) {
       const chat = await client.getChatById(groupId);
       data[groupId] = chat.name;
     } catch (err) {
-      console.warn(`[groups] Could not resolve name for ${groupId}:`, err.message);
+      log('warning', `[groups] Could not resolve name for ${groupId}: ${err.message}`);
     }
   }
 
   try {
     fs.writeFileSync(GROUPS_FILE, JSON.stringify(data, null, 2));
   } catch (err) {
-    console.warn('[groups] Could not write groups.json:', err.message);
+    log('warning', `[groups] Could not write groups.json: ${err.message}`);
   }
 }
 
@@ -86,6 +86,11 @@ const CATCHUP_MAX_AGE_S = 48 * 60 * 60;
 const LRM = '\u200E';
 const ltr = (str) => `${LRM}${str}${LRM}`;
 
+function log(level, msg) {
+  const now = new Date().toTimeString().slice(0, 8);
+  process.stdout.write(`[${now}][${level}] ${msg}\n`);
+}
+
 // Destroy the current browser process before launching a new one. Calling
 // initialize() directly without destroy() leaves the old Chrome process alive,
 // and Puppeteer will refuse to open a second browser on the same userDataDir.
@@ -95,7 +100,7 @@ async function reconnect() {
     await client.destroy();
   } catch (err) {
     // destroy() can throw if the browser frame is already detached — expected.
-    console.warn('[reconnect] destroy() failed:', err.message);
+    log('warning', `[reconnect] destroy() failed: ${err.message}`);
   }
   try {
     await client.initialize();
@@ -103,7 +108,7 @@ async function reconnect() {
     // initialize() can fail if Chrome's lock file survives after a bad shutdown.
     // When Node exits, the OS kills Chrome as its child process, releasing the
     // lock. start.py will restart this listener process automatically.
-    console.error('[reconnect] initialize() failed — exiting for restart:', err.message);
+    log('error', `[reconnect] initialize() failed — exiting for restart: ${err.message}`);
     process.exit(1);
   }
 }
@@ -128,7 +133,7 @@ async function catchUp(groupId, snapshotTimestamp) {
   try {
     chat = await client.getChatById(groupId);
   } catch (err) {
-    console.warn(`[catch-up] Could not resolve group ${groupId} — skipping. ${err.message}`);
+    log('warning', `[catch-up] Could not resolve group ${groupId} — skipping. ${err.message}`);
     return;
   }
 
@@ -137,30 +142,27 @@ async function catchUp(groupId, snapshotTimestamp) {
     // fetchMessages returns newest first; we reverse to process chronologically.
     messages = await chat.fetchMessages({ limit: CATCHUP_LIMIT });
   } catch (err) {
-    console.error(`[catch-up] fetchMessages failed for ${ltr(chat.name)}:`, err.message);
+    log('error', `[catch-up] fetchMessages failed for ${ltr(chat.name)}: ${err.message}`);
     return;
-  }
-
-  // Warn if we fetched exactly CATCHUP_LIMIT messages — the oldest messages in
-  // the window may have been cut off and will be permanently missed.
-  if (messages.length === CATCHUP_LIMIT) {
-    console.warn(
-      `[catch-up] ${ltr(chat.name)}: hit the ${CATCHUP_LIMIT}-message fetch ceiling — ` +
-      `some older messages may have been missed. Increase CATCHUP_LIMIT if this is a busy group.`
-    );
   }
 
   const missed = messages
     .filter((m) => m.timestamp > since && m.body)
     .reverse();
 
+  // Only warn when every fetched slot was a missed message — that means
+  // there may be even older missed messages beyond the fetch limit.
+  if (missed.length === CATCHUP_LIMIT) {
+    log('warning', `[catch-up] ${ltr(chat.name)}: replayed ${CATCHUP_LIMIT} messages and may have missed older ones. Increase CATCHUP_LIMIT if this is a busy group.`);
+  }
+
   if (missed.length > 0) {
-    console.log(`[catch-up] ${ltr(chat.name)}: replaying ${missed.length} missed message(s)`);
+    log('info', `[catch-up] ${ltr(chat.name)}: replaying ${missed.length} missed message(s)`);
     for (const m of missed) {
       try {
         await forwardMessage(m, chat.name);
       } catch (err) {
-        console.error(`[catch-up] Failed to forward message:`, err.message);
+        log('error', `[catch-up] Failed to forward message: ${err.message}`);
       }
     }
   }
@@ -196,7 +198,7 @@ const client = new Client({
 client.on('qr', (qr) => {
   if (qrPrinted) return;
   qrPrinted = true;
-  console.log('Scan this QR code with WhatsApp:');
+  log('info', 'Scan this QR code with WhatsApp:');
   qrcode.generate(qr, { small: true });
 });
 
@@ -221,7 +223,7 @@ async function saveAllGroups() {
   try {
     chats = await client.getChats();
   } catch (err) {
-    console.warn('[groups] Could not fetch all groups for snapshot:', err.message);
+    log('warning', `[groups] Could not fetch all groups for snapshot: ${err.message}`);
     return;
   }
   const groups = chats.filter((c) => c.isGroup);
@@ -230,7 +232,7 @@ async function saveAllGroups() {
   try {
     fs.writeFileSync(ALL_GROUPS_FILE, JSON.stringify(snapshot, null, 2));
   } catch (err) {
-    console.warn('[groups] Could not write all_whatsapp_groups.json:', err.message);
+    log('warning', `[groups] Could not write all_whatsapp_groups.json: ${err.message}`);
   }
 }
 
@@ -247,20 +249,20 @@ client.on('ready', async () => {
 
   if (watchedGroups.length === 0) {
     // Discovery mode: list all groups so the user can pick IDs.
-    console.log('Connected. groups.json is empty — fetching your groups...');
+    log('info', 'Connected. groups.json is empty — fetching your groups...');
     try {
       const chats = await client.getChats();
       const groups = chats.filter((c) => c.isGroup);
-      console.log(`Found ${groups.length} groups:\n`);
-      groups.forEach((g) => console.log(`  ${g.id._serialized}  —  ${ltr(g.name)}`));
-      console.log('\nUse /addgroup <id> in Telegram, or edit agent/groups.json directly, then restart.\n');
+      log('info', `Found ${groups.length} groups:`);
+      groups.forEach((g) => log('info', `  ${g.id._serialized}  —  ${ltr(g.name)}`));
+      log('info', 'Use /addgroup <id> in Telegram, or edit agent/groups.json directly, then restart.');
     } catch (err) {
-      console.error('Could not fetch groups:', err.message);
+      log('error', `Could not fetch groups: ${err.message}`);
     }
     return;
   }
 
-  console.log(`Connected. Watching ${watchedGroups.length} group(s). Checking for missed messages...`);
+  log('info', `Connected. Watching ${watchedGroups.length} group(s). Checking for missed messages...`);
 
   // Cache group display names so the Telegram bot can show them in /groups.
   await saveGroupNames(watchedGroups);
@@ -271,16 +273,16 @@ client.on('ready', async () => {
   for (const groupId of watchedGroups) {
     await catchUp(groupId, snapshot[groupId] || 0);
   }
-  console.log('Ready — listening for new messages.');
+  log('info', 'Ready — listening for new messages.');
 });
 
-client.on('auth_failure', (m) => console.error('auth_failure:', m));
+client.on('auth_failure', (m) => log('error', `auth_failure: ${m}`));
 
 client.on('disconnected', (reason) => {
   isReady = false;
-  console.warn(`Disconnected (${reason}). Reconnecting in 10s...`);
+  log('warning', `Disconnected (${reason}). Reconnecting in 10s...`);
   setTimeout(() => {
-    console.log('Reconnecting...');
+    log('info', 'Reconnecting...');
     reconnect();
   }, 10_000);
 });
@@ -296,7 +298,7 @@ client.on('message', async (msg) => {
     await forwardMessage(msg, chat.name);
     lastSeen.update(chat.id._serialized, msg.timestamp);
   } catch (err) {
-    console.error('Failed to forward message:', err.message);
+    log('error', `Failed to forward message: ${err.message}`);
   }
 });
 
@@ -305,7 +307,7 @@ client.on('message', async (msg) => {
 // code 1 lets start.py restart the listener automatically; it usually succeeds
 // on the next attempt.
 client.initialize().catch((err) => {
-  console.error('[init] initialize() failed — exiting for restart:', err.message);
+  log('error', `[init] initialize() failed — exiting for restart: ${err.message}`);
   process.exit(1);
 });
 
@@ -318,12 +320,12 @@ setInterval(async () => {
   try {
     const state = await client.getState();
     if (state !== 'CONNECTED') {
-      console.warn(`[heartbeat] State is ${state || 'null'} — reconnecting...`);
+      log('warning', `[heartbeat] State is ${state || 'null'} — reconnecting...`);
       isReady = false;
       reconnect();
     }
   } catch (err) {
-    console.warn('[heartbeat] getState() failed — reconnecting...', err.message);
+    log('warning', `[heartbeat] getState() failed — reconnecting... ${err.message}`);
     isReady = false;
     reconnect();
   }

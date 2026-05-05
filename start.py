@@ -30,6 +30,10 @@ load_dotenv()
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 
+def _log(level: str, msg: str) -> None:
+    print(f"[start] [{time.strftime('%H:%M:%S')}][{level}] {msg}", flush=True)
+
+
 def stream(proc: subprocess.Popen, label: str) -> None:
     """Forward a process's stdout+stderr to our stdout with a label prefix."""
     for line in proc.stdout:
@@ -89,12 +93,12 @@ def main() -> None:
         )
         thread = threading.Thread(target=stream, args=(proc, label), daemon=True)
         thread.start()
-        print(f"[start] {label} started (pid {proc.pid})")
+        _log("info", f"{label} started (pid {proc.pid})")
         return proc
 
     procs = [spawn(label, cmd) for label, cmd, _ in process_specs]
 
-    print("[start] All processes running. Press Ctrl+C to stop.\n")
+    _log("info", "All processes running. Press Ctrl+C to stop.")
 
     try:
         while True:
@@ -103,26 +107,25 @@ def main() -> None:
                     if proc.returncode == 0:
                         # Clean exit — the process decided there was nothing to do
                         # (e.g. no sources configured, no session file). Don't restart.
-                        print(f"\n[start] '{label}' exited cleanly (code 0). Not restarting.")
+                        _log("info", f"'{label}' exited cleanly (code 0). Not restarting.")
                         # Replace with a sentinel that never exits so the loop ignores it.
                         procs[i] = _NullProc()
                     elif auto_restart:
-                        print(f"\n[start] '{label}' crashed (code {proc.returncode}). "
-                              f"Restarting in {LISTENER_RESTART_DELAY}s...")
+                        _log("warning", f"'{label}' crashed (code {proc.returncode}). Restarting in {LISTENER_RESTART_DELAY}s...")
                         time.sleep(LISTENER_RESTART_DELAY)
                         procs[i] = spawn(label, cmd)
                     else:
-                        print(f"\n[start] '{label}' exited with code {proc.returncode}. Shutting down...")
+                        _log("error", f"'{label}' exited with code {proc.returncode}. Shutting down...")
                         raise SystemExit(1)
             threading.Event().wait(timeout=2)
     except KeyboardInterrupt:
-        print("\n[start] Shutting down...")
+        _log("info", "Shutting down...")
     finally:
         for proc in procs:
             proc.terminate()
         for proc in procs:
             proc.wait()
-        print("[start] All processes stopped.")
+        _log("info", "All processes stopped.")
 
 
 if __name__ == "__main__":

@@ -35,7 +35,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s — %(message)s")
+for _lvl, _name in [(10, "debug"), (20, "info"), (30, "warning"), (40, "error"), (50, "critical")]:
+    logging.addLevelName(_lvl, _name)
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s][%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 logging.getLogger("telethon").setLevel(logging.WARNING)
 
 # ---------------------------------------------------------------------------
@@ -195,7 +197,7 @@ async def run_listener() -> None:
     entity_names: dict[int, str] = {entity.id: name for entity, name in resolved}
     entity_objects = [entity for entity, _ in resolved]
 
-    logger.info("Telegram source listener started — watching %d source(s).", len(resolved))
+    logger.info("Telegram source listener started — watching %d source(s)", len(resolved))
 
     @client.on(events.NewMessage(chats=entity_objects))
     async def _on_message(event) -> None:
@@ -228,7 +230,7 @@ async def run_listener() -> None:
         except Exception as exc:
             logger.warning("[catch-up] Could not catch up on %s — skipping. %s: %s", source_name, type(exc).__name__, exc)
 
-    logger.info("Ready — listening for new Telegram messages.")
+    logger.info("Ready — listening for new messages")
     await client.run_until_disconnected()
 
 
