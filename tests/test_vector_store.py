@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agent.vector_store import _make_document, find_similar, index_job
+from agent.vector_store import _make_document, find_similar, index_job, is_near_duplicate
 
 
 # ---------------------------------------------------------------------------
@@ -59,13 +59,6 @@ class _FakeEmbeddingFunction:
 def fake_ef():
     return _FakeEmbeddingFunction()
 
-
-@pytest.fixture()
-def temp_chroma(tmp_path, monkeypatch):
-    """Point CHROMA_DB_PATH at a fresh temp directory."""
-    chroma_dir = tmp_path / "chroma"
-    monkeypatch.setenv("CHROMA_DB_PATH", str(chroma_dir))
-    return chroma_dir
 
 
 # ---------------------------------------------------------------------------
@@ -256,3 +249,82 @@ def test_store_job_succeeds_even_if_index_fails(temp_db, temp_chroma):
 
     assert isinstance(row_id, int)
     assert row_id > 0
+
+
+# ---------------------------------------------------------------------------
+# is_near_duplicate
+# ---------------------------------------------------------------------------
+
+def test_is_near_duplicate_empty_store_returns_false(temp_chroma, fake_ef):
+    """When the index is empty, nothing can be a duplicate."""
+    job = {"title": "Python Developer", "company": "Acme", "summary": "Build APIs"}
+    result = is_near_duplicate(job, embedding_fn=fake_ef)
+    assert result is False
+
+
+def test_is_near_duplicate_identical_text_returns_true(temp_db, temp_chroma, fake_ef):
+    """A job identical to an indexed one should be flagged as a near-duplicate."""
+    job = {"title": "Backend Engineer", "company": "TechCorp", "summary": "REST APIs"}
+
+    # Insert into SQLite and index it.
+    db_path = Path(temp_db)
+    conn = sqlite3.connect(db_path)
+    cur = conn.execute(
+        "INSERT INTO jobs (title, company, summary, seen) VALUES (?, ?, ?, 0)",
+        (job["title"], job["company"], job["summary"]),
+    )
+    index_job(cur.lastrowid, job, embedding_fn=fake_ef)
+    conn.commit()
+    conn.close()
+
+    # The FakeEmbeddingFunction produces distance=0 for identical text, so any
+    # positive threshold should match.
+    result = is_near_duplicate(job, distance_threshold=0.3, embedding_fn=fake_ef)
+    assert result is True
+
+
+def test_is_near_duplicate_different_job_returns_false(temp_db, temp_chroma, fake_ef):
+    """A job with sufficiently different text should not be flagged."""
+    indexed_job = {"title": "Backend Engineer", "company": "TechCorp", "summary": "REST APIs"}
+
+    db_path = Path(temp_db)
+    conn = sqlite3.connect(db_path)
+    cur = conn.execute(
+        "INSERT INTO jobs (title, company, summary, seen) VALUES (?, ?, ?, 0)",
+        (indexed_job["title"], indexed_job["company"], indexed_job["summary"]),
+    )
+    index_job(cur.lastrowid, indexed_job, embedding_fn=fake_ef)
+    conn.commit()
+    conn.close()
+
+    # distance_threshold=0.0 means only a distance of exactly 0 (identical text)
+    # counts as a duplicate, so any different text is safe.
+    different_job = {"title": "Frontend Developer", "company": "WebCo", "summary": "React UI"}
+    result = is_near_duplicate(different_job, distance_threshold=0.0, embedding_fn=fake_ef)
+    assert result is False
+
+
+def test_is_near_duplicate_error_is_non_fatal(temp_db, temp_chroma):
+    """A Chroma error during duplicate check must not surface to the caller."""
+    from agent.tools.store_tool import store_job
+
+    job = {"title": "DevOps Engineer", "company": "Ops Inc", "summary": "CI/CD"}
+
+    with patch("agent.vector_store.is_near_duplicate", side_effect=RuntimeError("chroma down")):
+        row_id = store_job(job)
+
+    # Error in the dedup check: job is stored normally.
+    assert isinstance(row_id, int)
+    assert row_id > 0
+
+
+def test_store_job_skips_near_duplicate(temp_db, temp_chroma):
+    """store_job returns None and skips the INSERT when a near-duplicate is detected."""
+    from agent.tools.store_tool import store_job
+
+    job = {"title": "ML Engineer", "company": "AI Co", "summary": "Train models"}
+
+    with patch("agent.vector_store.is_near_duplicate", return_value=True):
+        result = store_job(job)
+
+    assert result is None

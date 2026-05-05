@@ -14,10 +14,23 @@ if str(ROOT) not in sys.path:
 
 
 @pytest.fixture()
+def temp_chroma(tmp_path, monkeypatch):
+    """Point CHROMA_DB_PATH at a fresh temp directory for isolation."""
+    chroma_dir = tmp_path / "chroma"
+    monkeypatch.setenv("CHROMA_DB_PATH", str(chroma_dir))
+    return chroma_dir
+
+
+@pytest.fixture()
 def temp_db(tmp_path, monkeypatch):
-    """Point the DB modules at a fresh SQLite file inside ``tmp_path``."""
+    """Point the DB modules at a fresh SQLite file and a fresh Chroma dir.
+
+    Both JOBS_DB_PATH and CHROMA_DB_PATH are overridden so tests that call
+    store_job() never accidentally read from or write to the real databases.
+    """
     db_file = tmp_path / "jobs.db"
     monkeypatch.setenv("JOBS_DB_PATH", str(db_file))
+    monkeypatch.setenv("CHROMA_DB_PATH", str(tmp_path / "chroma"))
 
     from db.init_db import init_db
 

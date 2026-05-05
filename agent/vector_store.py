@@ -160,6 +160,48 @@ def index_job(job_id: int, job: dict, *, embedding_fn=None) -> None:
     collection.upsert(ids=[str(job_id)], documents=[document])
 
 
+def is_near_duplicate(
+    job: dict,
+    distance_threshold: float = 0.3,
+    *,
+    embedding_fn=None,
+) -> bool:
+    """Return True if job is a near-duplicate of an already-indexed job.
+
+    Builds the same document text as index_job, queries Chroma for the single
+    closest neighbour, and compares the L2 distance to ``distance_threshold``.
+    For unit-normalised embeddings (the default model) an L2 distance of 0.3
+    corresponds to roughly 95 % cosine similarity.
+
+    Returns False when the index is empty or chromadb is not installed, so the
+    first job of any text is never suppressed.
+
+    Args:
+        job: the candidate job dict (title, company, summary, skills, …).
+        distance_threshold: L2 distance below which the job is considered a
+            duplicate.  Lower values require higher similarity.
+        embedding_fn: optional embedding function override (same as index_job).
+    """
+    if not _CHROMA_AVAILABLE:
+        return False
+
+    collection = _get_collection(embedding_fn)
+    if collection.count() == 0:
+        return False
+
+    text = _make_document(0, job)
+    results = collection.query(
+        query_texts=[text],
+        n_results=1,
+        include=["distances"],
+    )
+    distances: list[float] = results.get("distances", [[]])[0]
+    if not distances:
+        return False
+
+    return distances[0] <= distance_threshold
+
+
 def find_similar(text: str, n: int = 5, *, embedding_fn=None) -> list[dict]:
     """Return up to n jobs most semantically similar to text.
 

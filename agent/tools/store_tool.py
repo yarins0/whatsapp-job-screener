@@ -17,8 +17,20 @@ def _db_path() -> Path:
     return Path(os.environ.get("JOBS_DB_PATH", DEFAULT_DB_PATH))
 
 
-def store_job(job: dict) -> int:
-    """Insert ``job`` into the ``jobs`` table and the vector index; return the new row id."""
+def store_job(job: dict) -> int | None:
+    """Insert ``job`` into the ``jobs`` table and the vector index.
+
+    Returns the new SQLite row id, or None if the job is suppressed as a
+    near-duplicate of an already-indexed job (vector similarity dedup).
+    """
+    if _try_is_near_duplicate(job):
+        logger.info(
+            "Skipping near-duplicate job title=%r company=%r",
+            job.get("title"),
+            job.get("company"),
+        )
+        return None
+
     db = _db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
 
@@ -53,6 +65,19 @@ def store_job(job: dict) -> int:
 
     _try_index_job(row_id, job)
     return row_id
+
+
+def _try_is_near_duplicate(job: dict) -> bool:
+    """Return True if the vector store considers job a near-duplicate.
+
+    Errors are non-fatal — if Chroma is unavailable, the job is not suppressed.
+    """
+    try:
+        from agent.vector_store import is_near_duplicate
+        return is_near_duplicate(job)
+    except Exception as exc:
+        logger.warning("vector_store.is_near_duplicate failed: %s", exc)
+        return False
 
 
 def _try_index_job(job_id: int, job: dict) -> None:
