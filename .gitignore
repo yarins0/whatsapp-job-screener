@@ -27,6 +27,7 @@ sources/telegram/.last_seen.json
 # Database
 db/*.db
 db/*.db-journal
+db/chroma/
 
 # OS / editor
 .DS_Store
