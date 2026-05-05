@@ -90,6 +90,7 @@ const ltr = (str) => `${LRM}${str}${LRM}`;
 // initialize() directly without destroy() leaves the old Chrome process alive,
 // and Puppeteer will refuse to open a second browser on the same userDataDir.
 async function reconnect() {
+  qrPrinted = false;
   try {
     await client.destroy();
   } catch (err) {
@@ -195,6 +196,8 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => {
+  if (qrPrinted) return;
+  qrPrinted = true;
   console.log('Scan this QR code with WhatsApp:');
   qrcode.generate(qr, { small: true });
 });
@@ -202,6 +205,11 @@ client.on('qr', (qr) => {
 // Tracks whether the client is currently connected. Used by the heartbeat to
 // avoid calling initialize() when a reconnect is already in progress.
 let isReady = false;
+
+// Prevents the QR code from being printed more than once per initialize() call.
+// WhatsApp Web regenerates the QR every ~20 s while waiting for a scan, which
+// would flood the terminal. Reset to false before each new initialize().
+let qrPrinted = false;
 
 // Path for the all-groups snapshot written on every connect.
 // Read by the Telegram /listgroups command to show group IDs for discovery.
