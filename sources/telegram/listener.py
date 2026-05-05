@@ -36,6 +36,7 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
+logging.getLogger("telethon").setLevel(logging.WARNING)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -224,8 +225,6 @@ async def run_listener() -> None:
                 for m in missed:
                     _forward(m.message, source_name, int(m.date.timestamp()))
                 _update_last_seen(entity_id, int(missed[-1].date.timestamp()))
-            else:
-                logger.info("[catch-up] %s: no missed messages", source_name)
         except Exception as exc:
             logger.warning("[catch-up] Could not catch up on %s — skipping. %s: %s", source_name, type(exc).__name__, exc)
 

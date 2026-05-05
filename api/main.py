@@ -16,6 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # hide "POST /ingest 200 OK" per request
+logging.getLogger("uvicorn.error").setLevel(logging.WARNING)   # hide "Started server process / Uvicorn running on…" startup lines
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="WhatsApp Job Screener", version="0.1.0")
