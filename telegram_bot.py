@@ -17,12 +17,14 @@ Supported interactions:
     /help                          — overview and quick-start
     /commands                      — full command list
     /prefs                         — show current roles, blocklist, blocked cities
+    /listgroups                    — list ALL WhatsApp groups with IDs (owner only)
     /groups                        — list watched WhatsApp groups
     /tgsources                     — list watched Telegram channels
     /jobs [keyword] [unseen]       — browse stored jobs (last 7 days by default)
     /ask <question>                — natural-language job search (demo quota applies)
 
   Text commands (write — owner only):
+    /listgroups                    — list ALL groups on the WhatsApp account with IDs
     /blockrole <keyword>           — add keyword to blocklist
     /blockcity <city>              — add city to location_blocklist
     /addrole <keyword>             — add keyword to the roles allow-list
@@ -192,7 +194,8 @@ def _handle_message(msg: dict) -> None:
                 "/blockcity <city> — add a city to the location blocklist\n"
                 "/addrole <keyword> — add a keyword to the roles allow-list\n\n"
                 "WhatsApp groups:\n"
-                "/groups — list watched WhatsApp groups\n"
+                "/listgroups — list ALL groups on your WhatsApp account (with IDs)\n"
+                "/groups — list currently watched groups\n"
                 "/addgroup <id> — start watching a group\n"
                 "/removegroup <id> — stop watching a group\n\n"
                 "Telegram channels:\n"
@@ -216,7 +219,8 @@ def _handle_message(msg: dict) -> None:
                 "/blockcity <city> — 🔒 owner only\n"
                 "/addrole <keyword> — 🔒 owner only\n\n"
                 "WhatsApp groups (view only):\n"
-                "/groups — list watched WhatsApp groups\n"
+                "/listgroups — 🔒 owner only\n"
+                "/groups — list currently watched groups\n"
                 "/addgroup <id> — 🔒 owner only\n"
                 "/removegroup <id> — 🔒 owner only\n\n"
                 "Telegram channels (view only):\n"
@@ -324,6 +328,44 @@ def _handle_message(msg: dict) -> None:
             return
         added = add_to_roles(keyword)
         _send(chat_id, f"Added role: '{keyword.lower()}'" if added else f"'{keyword.lower()}' is already in your roles list.")
+
+    elif text.startswith("/listgroups"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
+
+        import json
+        from pathlib import Path
+
+        snapshot_path = Path(__file__).parent / "agent" / "all_whatsapp_groups.json"
+        if not snapshot_path.exists():
+            _send(chat_id, (
+                "No group snapshot found yet.\n\n"
+                "Start the WhatsApp listener — it writes a full list of your groups "
+                "to all_whatsapp_groups.json on every connect.\n\n"
+                "Then run /listgroups again."
+            ))
+            return
+
+        try:
+            from agent.tools.groups_tool import load_groups
+            all_groups: dict = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            watched = set(load_groups())
+        except Exception as exc:
+            _send(chat_id, f"Could not read group list: {exc}")
+            return
+
+        if not all_groups:
+            _send(chat_id, "No groups found on the connected WhatsApp account.")
+            return
+
+        lines = [f"All WhatsApp groups ({len(all_groups)} found):\n"]
+        for gid, name in all_groups.items():
+            marker = " ✓" if gid in watched else ""
+            display = name or "unknown"
+            lines.append(f"  {display}{marker}\n  `{gid}`\n")
+        lines.append("✓ = currently being watched\nUse /addgroup <id> to start watching a group.")
+        _send(chat_id, "\n".join(lines))
 
     elif text.startswith("/groups"):
         from agent.tools.groups_tool import load_groups_with_names

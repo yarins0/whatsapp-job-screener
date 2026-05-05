@@ -81,9 +81,11 @@ On `ready`, the listener reads watched group IDs from `agent/groups.json` (a `{i
 
 ### Telegram bot: `telegram_bot.py`
 
-Long-polls `getUpdates`. Handles inline-button callback queries (`block_role:`, `block_city:`) and text commands: `/help`, `/commands`, `/start`, `/prefs`, `/blockrole`, `/blockcity`, `/addrole`, `/groups`, `/addgroup`, `/removegroup`, `/tgsources`, `/addtgsource`, `/removetgsource`, `/jobs`, `/ask`. All preference and group mutations delegate to `prefs_tool.py` and `groups_tool.py`. The `/jobs` command delegates to `query_tool.py`. The `/ask` command delegates to `ask_tool.ask_jobs()`.
+Long-polls `getUpdates`. Handles inline-button callback queries (`block_role:`, `block_city:`) and text commands: `/help`, `/commands`, `/start`, `/prefs`, `/blockrole`, `/blockcity`, `/addrole`, `/listgroups`, `/groups`, `/addgroup`, `/removegroup`, `/tgsources`, `/addtgsource`, `/removetgsource`, `/jobs`, `/ask`. All preference and group mutations delegate to `prefs_tool.py` and `groups_tool.py`. The `/jobs` command delegates to `query_tool.py`. The `/ask` command delegates to `ask_tool.ask_jobs()`.
 
-Access control: the owner is identified by `TELEGRAM_CHAT_ID`. Write commands (`/blockrole`, `/blockcity`, `/addrole`, `/addgroup`, `/removegroup`, `/addtgsource`, `/removetgsource`) are owner-only. Read commands (`/prefs`, `/groups`, `/tgsources`, `/jobs`, `/ask`) are available to all users, but `/ask` is rate-limited for non-owners via the module-level `_ask_counts` dict and `_ASK_DEMO_LIMIT` constant (default 3 per session).
+Access control: the owner is identified by `TELEGRAM_CHAT_ID`. Write/discovery commands (`/blockrole`, `/blockcity`, `/addrole`, `/listgroups`, `/addgroup`, `/removegroup`, `/addtgsource`, `/removetgsource`) are owner-only. Read commands (`/prefs`, `/groups`, `/tgsources`, `/jobs`, `/ask`) are available to all users, but `/ask` is rate-limited for non-owners via the module-level `_ask_counts` dict and `_ASK_DEMO_LIMIT` constant (default 3 per session).
+
+`/listgroups` reads `agent/all_whatsapp_groups.json` — a snapshot written by `listener.js` on every `ready` event. The file is gitignored. If it doesn't exist (listener has never connected), the bot tells the user to start the listener first. Watched groups are marked with ✓.
 
 ### Browse and query jobs: `agent/list_jobs.py`, `agent/tools/query_tool.py`, and `agent/tools/ask_tool.py`
 

@@ -37,5 +37,8 @@ db/*.db-journal
 .claude/
 .gstack/
 
+# WhatsApp group snapshot — written by listener.js on connect, read by /listgroups
+agent/all_whatsapp_groups.json
+
 # Local notes
 TODO.md

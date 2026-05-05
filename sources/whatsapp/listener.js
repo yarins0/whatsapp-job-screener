@@ -203,12 +203,41 @@ client.on('qr', (qr) => {
 // avoid calling initialize() when a reconnect is already in progress.
 let isReady = false;
 
+// Path for the all-groups snapshot written on every connect.
+// Read by the Telegram /listgroups command to show group IDs for discovery.
+const ALL_GROUPS_FILE = path.join(__dirname, '..', '..', 'agent', 'all_whatsapp_groups.json');
+
+// Fetch every WhatsApp group on the account and write a snapshot to
+// all_whatsapp_groups.json so the Telegram bot can serve /listgroups without
+// requiring the listener to be in discovery mode.
+async function saveAllGroups() {
+  let chats;
+  try {
+    chats = await client.getChats();
+  } catch (err) {
+    console.warn('[groups] Could not fetch all groups for snapshot:', err.message);
+    return;
+  }
+  const groups = chats.filter((c) => c.isGroup);
+  const snapshot = {};
+  groups.forEach((g) => { snapshot[g.id._serialized] = g.name; });
+  try {
+    fs.writeFileSync(ALL_GROUPS_FILE, JSON.stringify(snapshot, null, 2));
+  } catch (err) {
+    console.warn('[groups] Could not write all_whatsapp_groups.json:', err.message);
+  }
+}
+
 client.on('ready', async () => {
   isReady = true;
   // Snapshot the groups list once at startup — used for catch-up only.
   // Live message filtering re-reads groups.json each time, so /addgroup
   // and /removegroup take effect without a restart.
   const watchedGroups = loadGroups();
+
+  // Always write a full snapshot of all groups so /listgroups in the Telegram
+  // bot has up-to-date data regardless of which groups are being watched.
+  await saveAllGroups();
 
   if (watchedGroups.length === 0) {
     // Discovery mode: list all groups so the user can pick IDs.

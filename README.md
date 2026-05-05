@@ -144,7 +144,10 @@ api/
 
 sources/
   whatsapp/
-    listener.js      whatsapp-web.js client; reads groups.json; QR auth, heartbeat, catch-up replay
+    listener.js      whatsapp-web.js client; QR auth, heartbeat, catch-up replay;
+                     writes all_whatsapp_groups.json on every connect for /listgroups
+    list_groups.js   Standalone discovery tool — lists all groups + IDs, then exits
+                     (reuses saved session; no QR needed after first auth)
     last_seen.js     Per-group timestamp persistence (path-injectable for tests)
   telegram/
     listener.py      Telethon userbot; watches channels in telegram_sources.json; catch-up replay
@@ -160,11 +163,11 @@ digest/
 telegram_bot.py      Long-polls Telegram; handles feedback buttons + commands:
                      /help /commands /prefs
                      /blockrole /blockcity /addrole
+                     /listgroups      — ALL WhatsApp groups + IDs (owner only)
                      /groups /addgroup /removegroup
                      /tgsources /addtgsource /removetgsource
                      /jobs [keyword] [unseen]
-                     /ask <question>  — natural-language search backed by LLM extraction;
-                                        demo users are limited to 3 queries per session
+                     /ask <question>  — natural-language search; demo limited to 3/session
 
 db/
   schema.sql         SQLite schema (jobs, seen_hashes, group_stats)
