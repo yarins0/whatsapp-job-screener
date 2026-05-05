@@ -22,6 +22,7 @@ Supported interactions:
     /tgsources                     — list watched Telegram channels
     /jobs [keyword] [unseen]       — browse stored jobs (last 7 days by default)
     /ask <question>                — natural-language job search (demo quota applies)
+    /similar <text>                — find semantically similar jobs (vector search)
 
   Text commands (write — owner only):
     /listgroups                    — list ALL groups on the WhatsApp account with IDs
@@ -187,7 +188,8 @@ def _handle_message(msg: dict) -> None:
                 "/jobs — recent jobs (last 7 days)\n"
                 "/jobs <keyword> — filter by keyword\n"
                 "/jobs <keyword> unseen — keyword + unseen only\n"
-                "/ask <question> — natural-language search (e.g. remote Python jobs this week)\n\n"
+                "/ask <question> — natural-language search (e.g. remote Python jobs this week)\n"
+                "/similar <text> — find semantically similar jobs (e.g. Python backend FastAPI)\n\n"
                 "Preferences:\n"
                 "/prefs — show current roles, blocklist, and blocked cities\n"
                 "/blockrole <keyword> — add a keyword to the role blocklist\n"
@@ -212,7 +214,8 @@ def _handle_message(msg: dict) -> None:
                 "/jobs — recent jobs (last 7 days)\n"
                 "/jobs <keyword> — filter by keyword\n"
                 "/jobs <keyword> unseen — keyword + unseen only\n"
-                f"/ask <question> — natural-language search ({_ASK_DEMO_LIMIT} free queries per session)\n\n"
+                f"/ask <question> — natural-language search ({_ASK_DEMO_LIMIT} free queries per session)\n"
+                "/similar <text> — find semantically similar jobs\n\n"
                 "Preferences (view only):\n"
                 "/prefs — show current roles, blocklist, and blocked cities\n"
                 "/blockrole <keyword> — 🔒 owner only\n"
@@ -278,6 +281,30 @@ def _handle_message(msg: dict) -> None:
             )
             reply = reply + quota_note
 
+        _send(chat_id, reply)
+
+    elif text.startswith("/similar"):
+        from agent.vector_store import find_similar
+        from agent.tools.query_tool import format_jobs_telegram
+
+        query = text[len("/similar"):].strip()
+        if not query:
+            _send(chat_id, "Usage: /similar <text>\nExample: /similar Python backend FastAPI")
+            return
+
+        try:
+            jobs = find_similar(query, n=5)
+            if jobs:
+                body = format_jobs_telegram(jobs, days=0, role=None, unseen_only=False)
+                reply = f'Similar to "{query}":\n\n{body}'
+            else:
+                reply = (
+                    "No similar jobs found. Jobs are indexed as they arrive — "
+                    "try again after some jobs have been stored."
+                )
+        except Exception as exc:
+            logger.warning("find_similar failed: %s", exc)
+            reply = f"Could not search for similar jobs: {exc}"
         _send(chat_id, reply)
 
     elif text.startswith("/prefs"):

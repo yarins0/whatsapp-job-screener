@@ -1,11 +1,14 @@
-"""Store tool — persists a qualified job to SQLite."""
+"""Store tool — persists a qualified job to SQLite and the vector index."""
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "db" / "jobs.db"
 
@@ -15,7 +18,7 @@ def _db_path() -> Path:
 
 
 def store_job(job: dict) -> int:
-    """Insert ``job`` into the ``jobs`` table; return the new row id."""
+    """Insert ``job`` into the ``jobs`` table and the vector index; return the new row id."""
     db = _db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
 
@@ -44,6 +47,18 @@ def store_job(job: dict) -> int:
             ),
         )
         conn.commit()
-        return cur.lastrowid
+        row_id = cur.lastrowid
     finally:
         conn.close()
+
+    _try_index_job(row_id, job)
+    return row_id
+
+
+def _try_index_job(job_id: int, job: dict) -> None:
+    """Index the job in the vector store; errors are non-fatal (job is already in SQLite)."""
+    try:
+        from agent.vector_store import index_job
+        index_job(job_id, job)
+    except Exception as exc:
+        logger.warning("vector_store.index_job failed (job %s): %s", job_id, exc)

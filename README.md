@@ -89,6 +89,7 @@ WhatsApp Groups
 | LLM framework | LangChain (Python) |
 | LLM model | Configurable via `LLM_PROVIDER` + `LLM_MODEL` (default: Claude Haiku) |
 | Database | SQLite — `jobs`, `seen_hashes`, `group_stats` |
+| Vector search | ChromaDB — `all-MiniLM-L6-v2` embeddings, persisted to `db/chroma/` |
 | Scheduler | APScheduler — daily digest + web scraper polling |
 | Telegram bot | `python-telegram-bot`-style long-polling — commands + inline buttons |
 | Observability | LangSmith (free tier) |
@@ -97,7 +98,7 @@ WhatsApp Groups
 
 ## Tests
 
-**Python (97 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` / `FakeListLLM` using scripted JSON responses.
+**Python (110 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` / `FakeListLLM` using scripted JSON responses; Chroma is tested with a `_FakeEmbeddingFunction` that returns deterministic vectors.
 
 ```bash
 pytest tests/ -v                                              # all tests
@@ -138,6 +139,7 @@ agent/
     telegram_sources_tool.py   load_sources(), add_source(), remove_source() for telegram_sources.json
     query_tool.py              query_jobs() + format_jobs_telegram(); shared by CLI, /jobs, and /ask
     ask_tool.py                ask_jobs(); LLM extracts query params from natural language → query_jobs()
+  vector_store.py    index_job() + find_similar(); ChromaDB wrapper for semantic similarity search
 
 api/
   main.py            FastAPI: POST /ingest, GET /healthz
@@ -168,6 +170,7 @@ telegram_bot.py      Long-polls Telegram; handles feedback buttons + commands:
                      /tgsources /addtgsource /removetgsource
                      /jobs [keyword] [unseen]
                      /ask <question>  — natural-language search; demo limited to 3/session
+                     /similar <text>  — semantic similarity search via ChromaDB
 
 db/
   schema.sql         SQLite schema (jobs, seen_hashes, group_stats)
@@ -184,7 +187,7 @@ tests/
 
 - ~~**LangGraph**~~ — ✅ implemented: `agent/graph.py` — `StateGraph` with five named nodes (`route`, `extract`, `process_jobs`, `finish`, `finish_skipped`) connected by conditional edges; `pipeline.py` delegates to it via `ainvoke`
 - ~~**Conversational interface**~~ — ✅ implemented: `/ask` command in `telegram_bot.py`; `ask_tool.py` uses an LCEL chain to extract query parameters from natural language and delegates to `query_jobs()`; demo users are rate-limited to 3 queries per session
-- **Vector search** — `Chroma` or `FAISS` to find similar jobs you've seen before
+- ~~**Vector search**~~ — ✅ implemented: `agent/vector_store.py` — ChromaDB with `all-MiniLM-L6-v2` embeddings; each stored job is indexed automatically; `/similar <text>` Telegram command for semantic search
 - ~~**Feedback loop**~~ — ✅ implemented: inline buttons on notifications + Telegram commands to manage preferences and groups
 - ~~**Additional sources (Telegram)**~~ — ✅ implemented: Telethon userbot watches any channel the account is a member of; manage via `/tgsources` bot commands
 - **Additional sources (LinkedIn / job boards)** — re-enable web scrapers with site-native filters once confirmed URLs are available

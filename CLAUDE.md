@@ -100,6 +100,20 @@ The Telegram `/jobs` command uses the same `query_jobs()` + `format_jobs_telegra
 `ask_tool.py` exposes one public function:
 - `ask_jobs(question, *, llm=None) -> str` — builds an LCEL chain (`prompt | llm | JsonOutputParser`) that extracts `{days, role, unseen_only, limit}` from a natural-language question, then calls `query_jobs()` and returns a formatted string. Falls back to a keyword search on the raw question if the LLM response cannot be parsed. The `llm` parameter is injectable so tests can pass `FakeListLLM` and run offline.
 
+### Vector search: `agent/vector_store.py`
+
+`vector_store.py` exposes two public functions:
+- `index_job(job_id, job, *, embedding_fn=None)` — embeds `"{title} at {company} — {summary} — Skills: …"` and upserts into a ChromaDB collection keyed by SQLite row id. Called automatically by `store_tool.store_job()` after every insert (errors are non-fatal).
+- `find_similar(text, n=5, *, embedding_fn=None)` — nearest-neighbour query in Chroma; fetches full job rows from SQLite for the returned ids; returns them in similarity order.
+
+**Persistence:** ChromaDB writes to `db/chroma/` by default, configurable via the `CHROMA_DB_PATH` env var. The `temp_chroma` test fixture points it at `tmp_path/chroma`.
+
+**Embedding model:** ChromaDB's default (`all-MiniLM-L6-v2` from `sentence-transformers`) — downloaded ~80 MB on first use, then runs offline. In tests, a `_FakeEmbeddingFunction` (deterministic, 8-dim vectors) is injected to avoid any download.
+
+**Graceful degradation:** if `chromadb` is not installed, `index_job` silently does nothing and `find_similar` returns `[]`.
+
+The Telegram `/similar <text>` command calls `find_similar(text, n=5)` and formats the results with `format_jobs_telegram`.
+
 ### Key design decisions
 
 - **Pipeline is a LangGraph `StateGraph`** — `agent/graph.py` defines nodes and conditional edges; `pipeline.py` delegates via `ainvoke`. Easier to extend, visualise, and add per-node retries than a flat `if/elif` body.
@@ -107,6 +121,8 @@ The Telegram `/jobs` command uses the same `query_jobs()` + `format_jobs_telegra
 - **`JOBS_DB_PATH` env var** — all DB modules (`dedup_tool`, `store_tool`, `stats_tool`, `init_db`) read this env var; the `temp_db` pytest fixture sets it to a `tmp_path` file, isolating test state.
 - **`PREFS_PATH` env var** — `prefs_tool` reads this to locate `agent/prefs.json`; the `temp_prefs` fixture overrides it per test.
 - **`GROUPS_PATH` env var** — `groups_tool` reads this to locate `agent/groups.json`; the `temp_groups` fixture overrides it per test.
+- **`CHROMA_DB_PATH` env var** — `vector_store` reads this to locate the ChromaDB persistence directory; the `temp_chroma` fixture in `test_vector_store.py` overrides it per test.
+- **Vector indexing is non-fatal** — `store_tool._try_index_job` wraps `index_job` in a try/except so a missing or broken Chroma installation never stops a job from being stored in SQLite.
 - **Dedup is atomic** — `INSERT OR IGNORE` + `rowcount` check eliminates the SELECT+INSERT race condition.
 - **Filter reads prefs on every call** — `filter_tool` calls `load_prefs()` each time so Telegram-bot changes take effect on the next message without a restart.
 - **Filter returns `(passed, reason)`** — the rejection reason propagates to the API log and the pipeline result.
@@ -139,7 +155,7 @@ Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXIS
 
 ### Tests
 
-**Python (97 tests)** — all run offline. `conftest.py` provides:
+**Python (110 tests)** — all run offline. `conftest.py` provides:
 - `temp_db` — creates a fresh isolated DB (all three tables) and sets `JOBS_DB_PATH`
 - `temp_prefs` — writes a minimal `prefs.json` to a temp file and sets `PREFS_PATH`
 - `temp_groups` — writes an empty `whatsapp_sources.json` map to a temp file and sets `GROUPS_PATH`
@@ -153,6 +169,7 @@ Key test patterns:
 - Telegram bot command tests use `unittest.mock.patch("telegram_bot._send")` to capture replies without making real API calls.
 - Query tool tests use the `temp_db` fixture and insert rows directly via `sqlite3` to avoid going through the pipeline.
 - Ask tool tests inject `FakeListLLM` (scripted JSON responses) via the `llm` parameter; the bot handler tests patch `agent.tools.ask_tool._default_llm` to return the fake. Demo rate-limit tests manipulate `telegram_bot._ask_counts` directly.
+- Vector store tests (`test_vector_store.py`) use a `temp_chroma` fixture (sets `CHROMA_DB_PATH` to `tmp_path/chroma`) and inject a `_FakeEmbeddingFunction` to avoid downloading the sentence-transformer model. Store-tool integration tests patch `agent.vector_store.index_job` (the source module attribute, not the local import) to verify call-through behaviour.
 
 **Node.js (7 tests)** — Jest tests for `sources/whatsapp/last_seen.js`. Each test uses a unique tmp file path so tests never touch the real state file.
 
@@ -170,6 +187,7 @@ Copy `.env.example` to `.env` and fill in:
 | `JOBS_DB_PATH` | No | Override DB path (defaults to `db/jobs.db`) |
 | `PREFS_PATH` | No | Override prefs file path (defaults to `agent/prefs.json`) |
 | `GROUPS_PATH` | No | Override WhatsApp sources file path (defaults to `agent/whatsapp_sources.json`) |
+| `CHROMA_DB_PATH` | No | Override ChromaDB persistence directory (defaults to `db/chroma`) |
 | `TELEGRAM_BOT_TOKEN` | No | Instant notifications, digest delivery, and bot commands |
 | `TELEGRAM_CHAT_ID` | No | Telegram recipient |
 | `TELEGRAM_API_ID` | No (Telegram source) | From [my.telegram.org](https://my.telegram.org) → API Development Tools |
