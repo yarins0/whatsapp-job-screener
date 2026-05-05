@@ -79,6 +79,35 @@ class PipelineState(TypedDict, total=False):
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _normalise_jobs(raw: Any) -> list:
+    """Ensure extractor output is always a list.
+
+    The LLM may return a single dict (one job) or a list (multiple jobs in one
+    message). Normalising here means every downstream node can assume a list.
+    """
+    return raw if isinstance(raw, list) else [raw]
+
+
+def _make_route_result(
+    is_job: bool,
+    confidence: float,
+    jobs: list,
+    mode: str,
+    group: str,
+) -> dict:
+    """Record per-group stats and return the route node's state update.
+
+    Centralises the record_message call and the repeated dict shape so neither
+    needs to be written out in each of the three route sub-paths.
+    """
+    record_message(group, is_job and confidence >= CONFIDENCE_THRESHOLD)
+    return {"is_job": is_job, "confidence": confidence, "jobs": jobs, "mode": mode}
+
+
+# ---------------------------------------------------------------------------
 # Node functions
 # ---------------------------------------------------------------------------
 
@@ -99,23 +128,17 @@ async def route(state: PipelineState) -> dict:
 
     if sender == "web-scraper":
         # Web-scraped listings are guaranteed job posts — skip the classifier.
-        extractor = build_extractor_chain(llm)
-        raw = await extractor.ainvoke({"message": text})
-        jobs = raw if isinstance(raw, list) else [raw]
-        record_message(group, True)
-        return {"is_job": True, "confidence": 1.0, "jobs": jobs, "mode": "web-scraper"}
+        raw = await build_extractor_chain(llm).ainvoke({"message": text})
+        return _make_route_result(True, 1.0, _normalise_jobs(raw), "web-scraper", group)
 
     mode = get_pipeline_mode(group)
 
     if mode == "combined":
         try:
-            combined_chain = build_combined_chain(llm)
-            combined = await combined_chain.ainvoke({"message": text})
+            combined = await build_combined_chain(llm).ainvoke({"message": text})
             is_job: bool = combined.get("is_job_post", False)
             confidence: float = float(combined.get("confidence", 0.0))
-            jobs = combined.get("jobs") or []
-            record_message(group, is_job and confidence >= CONFIDENCE_THRESHOLD)
-            return {"is_job": is_job, "confidence": confidence, "jobs": jobs, "mode": "combined"}
+            return _make_route_result(is_job, confidence, combined.get("jobs") or [], "combined", group)
         except Exception as exc:
             # If the combined chain fails, fall back to separate mode so the
             # message is not silently lost.
@@ -123,12 +146,10 @@ async def route(state: PipelineState) -> dict:
             mode = "separate"
 
     # Separate mode: classify here, extract in the dedicated extract node.
-    classifier = build_classifier_chain(llm)
-    classification = await classifier.ainvoke({"message": text})
+    classification = await build_classifier_chain(llm).ainvoke({"message": text})
     is_job = bool(classification.get("is_job_post"))
     confidence = float(classification.get("confidence", 0.0))
-    record_message(group, is_job and confidence >= CONFIDENCE_THRESHOLD)
-    return {"is_job": is_job, "confidence": confidence, "jobs": [], "mode": "separate"}
+    return _make_route_result(is_job, confidence, [], "separate", group)
 
 
 async def extract(state: PipelineState) -> dict:
@@ -136,12 +157,8 @@ async def extract(state: PipelineState) -> dict:
 
     Only reached in separate mode after the classifier confirms this is a job post.
     """
-    text: str = state["message"].get("text", "")
-    llm: BaseLanguageModel = state["llm"]
-    extractor = build_extractor_chain(llm)
-    raw = await extractor.ainvoke({"message": text})
-    jobs = raw if isinstance(raw, list) else [raw]
-    return {"jobs": jobs}
+    raw = await build_extractor_chain(state["llm"]).ainvoke({"message": state["message"].get("text", "")})
+    return {"jobs": _normalise_jobs(raw)}
 
 
 async def process_jobs(state: PipelineState) -> dict:

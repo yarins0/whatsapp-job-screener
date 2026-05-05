@@ -24,6 +24,7 @@ See **[docs/SETUP.md](docs/SETUP.md)** for the full setup guide — prerequisite
 | `AgentExecutor` / Tools | Filter, dedup, store tools called in pipeline |
 | `WebBaseLoader` | Loading job board pages in the web scraper sources |
 | LangSmith tracing | Observability — every chain call is visible at smith.langchain.com |
+| LangGraph `StateGraph` | Pipeline as a directed graph of nodes with conditional edges (`agent/graph.py`) |
 
 ---
 
@@ -96,7 +97,7 @@ WhatsApp Groups
 
 ## Tests
 
-**Python (74 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` using scripted JSON responses.
+**Python (87 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` using scripted JSON responses.
 
 ```bash
 pytest tests/ -v                                              # all tests
@@ -117,7 +118,8 @@ npm test
 
 ```
 agent/
-  pipeline.py        Main async orchestrator — start reading here
+  pipeline.py        Entry point — run_pipeline() delegates to agent/graph.py
+  graph.py           LangGraph StateGraph — nodes, edges, and routing logic
   prefs.json         User preferences (roles, blocklist, location_blocklist) — edit directly or via bot
   groups.json        Watched WhatsApp group IDs and display names — edit directly or via bot
   memory.py          UserPreferences TypedDict (type definition only)
@@ -174,7 +176,7 @@ tests/
 
 ## Phase 2 ideas
 
-- **LangGraph** — convert the pipeline to a stateful graph for retries and branching
+- ~~**LangGraph**~~ — ✅ implemented: `agent/graph.py` — `StateGraph` with five named nodes (`route`, `extract`, `process_jobs`, `finish`, `finish_skipped`) connected by conditional edges; `pipeline.py` delegates to it via `ainvoke`
 - **Conversational interface** — `ConversationChain` so you can query: *"show me remote Python jobs from this week"*
 - **Vector search** — `Chroma` or `FAISS` to find similar jobs you've seen before
 - ~~**Feedback loop**~~ — ✅ implemented: inline buttons on notifications + Telegram commands to manage preferences and groups

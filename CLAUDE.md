@@ -48,18 +48,25 @@ WhatsApp (Node.js listener) → POST /ingest (FastAPI) → run_pipeline() → SQ
                                                               Daily digest (APScheduler)
 ```
 
-### Core flow: `agent/pipeline.py`
+### Core flow: `agent/pipeline.py` + `agent/graph.py`
 
-`run_pipeline(message)` is the main entry point. It is `async` and accepts an optional `llm` override (used by tests) and `notify=False` (used by the smoke test to suppress Telegram).
+`run_pipeline(message)` is the main entry point. It is `async` and accepts an optional `llm` override (used by tests) and `notify=False` (used by the smoke test to suppress Telegram). It delegates all orchestration to the LangGraph `StateGraph` compiled in `agent/graph.py`.
 
-**Adaptive mode selection:** Before classifying, the pipeline calls `get_pipeline_mode(group)` from `agent/tools/stats_tool.py`. Once a group has ≥50 messages and ≥70% are job posts, the mode switches to `"combined"`. Otherwise it uses `"separate"` (the default).
+**Graph nodes** (defined in `agent/graph.py`):
 
-- **Separate mode** — two LLM calls: classifier first, then extractor only if it passes.
+- **`route`** — selects and runs the appropriate classification path, then returns `{is_job, confidence, jobs, mode}`.
+- **`extract`** — runs the extractor chain (separate mode only, after classification passes).
+- **`process_jobs`** — dedup → filter → store → notify loop over every extracted job.
+- **`finish`** / **`finish_skipped`** — assemble the final result dict.
+
+**Adaptive mode selection:** The `route` node calls `get_pipeline_mode(group)` from `agent/tools/stats_tool.py`. Once a group has ≥50 messages and ≥70% are job posts, the mode switches to `"combined"`. Otherwise it uses `"separate"` (the default).
+
+- **Separate mode** — two LLM calls: classifier first (in `route`), then extractor (in `extract` node) only if it passes.
 - **Combined mode** — one LLM call: `agent/chains/combined.py` classifies and extracts simultaneously, returning `{is_job_post, confidence, jobs: [...]}`.
 
-In both modes, after classification, stats are recorded via `record_message(group, is_job_post)`.
+In both modes, stats are recorded via `record_message(group, is_job_post)` inside `_make_route_result`.
 
-A message may contain multiple job posts. The extractor returns a list; steps 3–6 run as a loop over every job:
+A message may contain multiple job posts. The extractor normalises to a list via `_normalise_jobs`; `process_jobs` loops over every job:
 
 3. **Dedup** (`agent/tools/dedup_tool.py`) — atomic `INSERT OR IGNORE` on `seen_hashes` table.
 4. **Filter** (`agent/tools/filter_tool.py`) — calls `load_prefs()` from `agent/tools/prefs_tool.py` (reads `agent/prefs.json` on every call so Telegram-bot changes take effect immediately). Returns `(passed, reason)`.
@@ -88,7 +95,7 @@ The Telegram `/jobs` command uses the same `query_jobs()` + `format_jobs_telegra
 
 ### Key design decisions
 
-- **Pipeline is `async/await`, not one LCEL chain** — easier to mock per-step in tests and trace in LangSmith.
+- **Pipeline is a LangGraph `StateGraph`** — `agent/graph.py` defines nodes and conditional edges; `pipeline.py` delegates via `ainvoke`. Easier to extend, visualise, and add per-node retries than a flat `if/elif` body.
 - **`llm` is injected** — `_default_llm()` lazy-imports `langchain_anthropic` so tests run offline with `FakeListChatModel`.
 - **`JOBS_DB_PATH` env var** — all DB modules (`dedup_tool`, `store_tool`, `stats_tool`, `init_db`) read this env var; the `temp_db` pytest fixture sets it to a `tmp_path` file, isolating test state.
 - **`PREFS_PATH` env var** — `prefs_tool` reads this to locate `agent/prefs.json`; the `temp_prefs` fixture overrides it per test.
@@ -129,6 +136,7 @@ Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXIS
 - `temp_db` — creates a fresh isolated DB (all three tables) and sets `JOBS_DB_PATH`
 - `temp_prefs` — writes a minimal `prefs.json` to a temp file and sets `PREFS_PATH`
 - `temp_groups` — writes an empty `whatsapp_sources.json` map to a temp file and sets `GROUPS_PATH`
+- `telegram_owner` — sets `TELEGRAM_CHAT_ID=42` so write commands pass `_is_owner`; needed by all write-command bot tests
 - `sample_messages` — loads `tests/sample_messages.json`
 
 Key test patterns:
