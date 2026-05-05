@@ -97,7 +97,7 @@ WhatsApp Groups
 
 ## Tests
 
-**Python (87 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` using scripted JSON responses.
+**Python (97 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` / `FakeListLLM` using scripted JSON responses.
 
 ```bash
 pytest tests/ -v                                              # all tests
@@ -136,7 +136,8 @@ agent/
     prefs_tool.py              load_prefs(), add_to_blocklist(), add_to_location_blocklist(), add_to_roles()
     groups_tool.py             load_groups(), add_group(), remove_group()
     telegram_sources_tool.py   load_sources(), add_source(), remove_source() for telegram_sources.json
-    query_tool.py              query_jobs() + format_jobs_telegram(); shared by CLI and /jobs bot command
+    query_tool.py              query_jobs() + format_jobs_telegram(); shared by CLI, /jobs, and /ask
+    ask_tool.py                ask_jobs(); LLM extracts query params from natural language → query_jobs()
 
 api/
   main.py            FastAPI: POST /ingest, GET /healthz
@@ -162,6 +163,8 @@ telegram_bot.py      Long-polls Telegram; handles feedback buttons + commands:
                      /groups /addgroup /removegroup
                      /tgsources /addtgsource /removetgsource
                      /jobs [keyword] [unseen]
+                     /ask <question>  — natural-language search backed by LLM extraction;
+                                        demo users are limited to 3 queries per session
 
 db/
   schema.sql         SQLite schema (jobs, seen_hashes, group_stats)
@@ -177,7 +180,7 @@ tests/
 ## Phase 2 ideas
 
 - ~~**LangGraph**~~ — ✅ implemented: `agent/graph.py` — `StateGraph` with five named nodes (`route`, `extract`, `process_jobs`, `finish`, `finish_skipped`) connected by conditional edges; `pipeline.py` delegates to it via `ainvoke`
-- **Conversational interface** — `ConversationChain` so you can query: *"show me remote Python jobs from this week"*
+- ~~**Conversational interface**~~ — ✅ implemented: `/ask` command in `telegram_bot.py`; `ask_tool.py` uses an LCEL chain to extract query parameters from natural language and delegates to `query_jobs()`; demo users are rate-limited to 3 queries per session
 - **Vector search** — `Chroma` or `FAISS` to find similar jobs you've seen before
 - ~~**Feedback loop**~~ — ✅ implemented: inline buttons on notifications + Telegram commands to manage preferences and groups
 - ~~**Additional sources (Telegram)**~~ — ✅ implemented: Telethon userbot watches any channel the account is a member of; manage via `/tgsources` bot commands

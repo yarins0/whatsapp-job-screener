@@ -81,9 +81,11 @@ On `ready`, the listener reads watched group IDs from `agent/groups.json` (a `{i
 
 ### Telegram bot: `telegram_bot.py`
 
-Long-polls `getUpdates`. Handles inline-button callback queries (`block_role:`, `block_city:`) and text commands: `/help`, `/commands`, `/start`, `/prefs`, `/blockrole`, `/blockcity`, `/addrole`, `/groups`, `/addgroup`, `/removegroup`, `/jobs`. All preference and group mutations delegate to `prefs_tool.py` and `groups_tool.py`. The `/jobs` command delegates to `query_tool.py`.
+Long-polls `getUpdates`. Handles inline-button callback queries (`block_role:`, `block_city:`) and text commands: `/help`, `/commands`, `/start`, `/prefs`, `/blockrole`, `/blockcity`, `/addrole`, `/groups`, `/addgroup`, `/removegroup`, `/tgsources`, `/addtgsource`, `/removetgsource`, `/jobs`, `/ask`. All preference and group mutations delegate to `prefs_tool.py` and `groups_tool.py`. The `/jobs` command delegates to `query_tool.py`. The `/ask` command delegates to `ask_tool.ask_jobs()`.
 
-### Browse jobs: `agent/list_jobs.py` and `agent/tools/query_tool.py`
+Access control: the owner is identified by `TELEGRAM_CHAT_ID`. Write commands (`/blockrole`, `/blockcity`, `/addrole`, `/addgroup`, `/removegroup`, `/addtgsource`, `/removetgsource`) are owner-only. Read commands (`/prefs`, `/groups`, `/tgsources`, `/jobs`, `/ask`) are available to all users, but `/ask` is rate-limited for non-owners via the module-level `_ask_counts` dict and `_ASK_DEMO_LIMIT` constant (default 3 per session).
+
+### Browse and query jobs: `agent/list_jobs.py`, `agent/tools/query_tool.py`, and `agent/tools/ask_tool.py`
 
 `query_tool.py` exposes two public functions:
 - `query_jobs(days, role, unseen_only, limit)` — queries the `jobs` table with optional filters; returns a list of dicts ordered newest-first.
@@ -92,6 +94,9 @@ Long-polls `getUpdates`. Handles inline-button callback queries (`block_role:`, 
 `list_jobs.py` is the CLI entry point (`python -m agent.list_jobs`). It calls `query_jobs()` and prints a fixed-width terminal table. Flags: `--days N`, `--role KEYWORD`, `--unseen`, `--limit N`.
 
 The Telegram `/jobs` command uses the same `query_jobs()` + `format_jobs_telegram()` path, so both surfaces always produce consistent results from the same query logic.
+
+`ask_tool.py` exposes one public function:
+- `ask_jobs(question, *, llm=None) -> str` — builds an LCEL chain (`prompt | llm | JsonOutputParser`) that extracts `{days, role, unseen_only, limit}` from a natural-language question, then calls `query_jobs()` and returns a formatted string. Falls back to a keyword search on the raw question if the LLM response cannot be parsed. The `llm` parameter is injectable so tests can pass `FakeListLLM` and run offline.
 
 ### Key design decisions
 
@@ -132,7 +137,7 @@ Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXIS
 
 ### Tests
 
-**Python (87 tests)** — all run offline. `conftest.py` provides:
+**Python (97 tests)** — all run offline. `conftest.py` provides:
 - `temp_db` — creates a fresh isolated DB (all three tables) and sets `JOBS_DB_PATH`
 - `temp_prefs` — writes a minimal `prefs.json` to a temp file and sets `PREFS_PATH`
 - `temp_groups` — writes an empty `whatsapp_sources.json` map to a temp file and sets `GROUPS_PATH`
@@ -145,6 +150,7 @@ Key test patterns:
 - Stats tool tests use `monkeypatch.setenv("JOBS_DB_PATH", ...)` directly, bypassing the `temp_db` fixture where needed.
 - Telegram bot command tests use `unittest.mock.patch("telegram_bot._send")` to capture replies without making real API calls.
 - Query tool tests use the `temp_db` fixture and insert rows directly via `sqlite3` to avoid going through the pipeline.
+- Ask tool tests inject `FakeListLLM` (scripted JSON responses) via the `llm` parameter; the bot handler tests patch `agent.tools.ask_tool._default_llm` to return the fake. Demo rate-limit tests manipulate `telegram_bot._ask_counts` directly.
 
 **Node.js (7 tests)** — Jest tests for `sources/whatsapp/last_seen.js`. Each test uses a unique tmp file path so tests never touch the real state file.
 

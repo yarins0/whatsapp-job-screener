@@ -234,4 +234,9 @@ async def run_listener() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run_listener())
+    try:
+        asyncio.run(run_listener())
+    except KeyboardInterrupt:
+        # Ctrl+C during asyncio.run() always re-raises KeyboardInterrupt after
+        # cancelling pending tasks. This is normal shutdown, not an error.
+        logger.info("Telegram source listener stopped.")

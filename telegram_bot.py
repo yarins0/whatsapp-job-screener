@@ -3,13 +3,33 @@
 Runs as a standalone process (started by start.py). Uses long-polling so no public
 URL or webhook setup is required.
 
+Access control:
+  Owner  — identified by TELEGRAM_CHAT_ID; full access to all commands.
+  Demo   — any other chat_id; read-only with a capped /ask quota
+             (_ASK_DEMO_LIMIT queries per bot session).
+
 Supported interactions:
   Button callbacks (on job notifications):
     block_role:<job_id>:<keyword>  — add keyword to blocklist
     block_city:<job_id>:<city>     — add city to location_blocklist
 
-  Text commands:
-    /prefs — show the current preferences
+  Text commands (read — available to all):
+    /help                          — overview and quick-start
+    /commands                      — full command list
+    /prefs                         — show current roles, blocklist, blocked cities
+    /groups                        — list watched WhatsApp groups
+    /tgsources                     — list watched Telegram channels
+    /jobs [keyword] [unseen]       — browse stored jobs (last 7 days by default)
+    /ask <question>                — natural-language job search (demo quota applies)
+
+  Text commands (write — owner only):
+    /blockrole <keyword>           — add keyword to blocklist
+    /blockcity <city>              — add city to location_blocklist
+    /addrole <keyword>             — add keyword to the roles allow-list
+    /addgroup <id>                 — start watching a WhatsApp group
+    /removegroup <id>              — stop watching a WhatsApp group
+    /addtgsource <@username|id>    — start watching a Telegram channel
+    /removetgsource <@username|id> — stop watching a Telegram channel
 """
 
 from __future__ import annotations
@@ -31,6 +51,13 @@ _READONLY_DENIED = (
     "🔒 This is a read-only demo. "
     "Only the owner can modify preferences and sources."
 )
+
+# Maximum number of /ask queries a non-owner (demo) user may run per bot session.
+# Resets when the bot process restarts.
+_ASK_DEMO_LIMIT = 3
+
+# Maps chat_id → number of /ask calls used by that demo user this session.
+_ask_counts: dict[int, int] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +171,8 @@ def _handle_message(msg: dict) -> None:
             "When a new job is stored you'll get an instant notification with two buttons:\n"
             "  • Block role — never see this type of job again\n"
             "  • Block city — skip jobs in that city\n\n"
-            "Use /jobs to browse stored jobs, or /jobs python to filter by keyword.\n\n"
+            "Use /jobs to browse stored jobs, or /jobs python to filter by keyword.\n"
+            "Use /ask to search in plain English — e.g. /ask remote Python jobs this week.\n\n"
             "You can also manage your preferences any time using text commands.\n\n"
             "For a full list of commands, use /commands."
         ))
@@ -156,7 +184,8 @@ def _handle_message(msg: dict) -> None:
                 "Jobs:\n"
                 "/jobs — recent jobs (last 7 days)\n"
                 "/jobs <keyword> — filter by keyword\n"
-                "/jobs <keyword> unseen — keyword + unseen only\n\n"
+                "/jobs <keyword> unseen — keyword + unseen only\n"
+                "/ask <question> — natural-language search (e.g. remote Python jobs this week)\n\n"
                 "Preferences:\n"
                 "/prefs — show current roles, blocklist, and blocked cities\n"
                 "/blockrole <keyword> — add a keyword to the role blocklist\n"
@@ -179,7 +208,8 @@ def _handle_message(msg: dict) -> None:
                 "Jobs:\n"
                 "/jobs — recent jobs (last 7 days)\n"
                 "/jobs <keyword> — filter by keyword\n"
-                "/jobs <keyword> unseen — keyword + unseen only\n\n"
+                "/jobs <keyword> unseen — keyword + unseen only\n"
+                f"/ask <question> — natural-language search ({_ASK_DEMO_LIMIT} free queries per session)\n\n"
                 "Preferences (view only):\n"
                 "/prefs — show current roles, blocklist, and blocked cities\n"
                 "/blockrole <keyword> — 🔒 owner only\n"
@@ -210,6 +240,40 @@ def _handle_message(msg: dict) -> None:
             reply = format_jobs_telegram(jobs, days=7, role=role, unseen_only=unseen_only)
         except Exception as exc:
             reply = f"Could not query jobs: {exc}"
+        _send(chat_id, reply)
+
+    elif text.startswith("/ask"):
+        from agent.tools.ask_tool import ask_jobs
+
+        question = text[len("/ask"):].strip()
+        if not question:
+            _send(chat_id, "Usage: /ask <question>\nExample: /ask remote Python jobs this week")
+            return
+
+        if not _is_owner(chat_id):
+            used = _ask_counts.get(chat_id, 0)
+            if used >= _ASK_DEMO_LIMIT:
+                _send(
+                    chat_id,
+                    f"🔒 You've used all {_ASK_DEMO_LIMIT} free /ask queries for this session.\n"
+                    "Only the owner has unlimited access.",
+                )
+                return
+            _ask_counts[chat_id] = used + 1
+            remaining = _ASK_DEMO_LIMIT - _ask_counts[chat_id]
+
+        try:
+            reply = ask_jobs(question)
+        except Exception as exc:
+            logger.warning("ask_jobs failed: %s", exc)
+            reply = f"Could not process your query: {exc}"
+
+        if not _is_owner(chat_id):
+            quota_note = (
+                f"\n\n_{remaining} free /ask {'query' if remaining == 1 else 'queries'} remaining this session._"
+            )
+            reply = reply + quota_note
+
         _send(chat_id, reply)
 
     elif text.startswith("/prefs"):
