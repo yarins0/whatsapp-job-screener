@@ -359,13 +359,37 @@ def _handle_message(msg: dict) -> None:
             _send(chat_id, "No groups found on the connected WhatsApp account.")
             return
 
-        lines = [f"All WhatsApp groups ({len(all_groups)} found):\n"]
+        # Build one entry per group; keep entries together when paginating.
+        footer = "✓ = currently being watched\nUse /addgroup <id> to start watching a group."
+        header = f"All WhatsApp groups ({len(all_groups)} found):\n"
+        entries = []
         for gid, name in all_groups.items():
             marker = " ✓" if gid in watched else ""
             display = name or "unknown"
-            lines.append(f"  {display}{marker}\n  `{gid}`\n")
-        lines.append("✓ = currently being watched\nUse /addgroup <id> to start watching a group.")
-        _send(chat_id, "\n".join(lines))
+            entries.append(f"  {display}{marker}\n  {gid}")
+
+        # Paginate: Telegram caps messages at 4096 chars.
+        # Emit header on the first page, footer on the last.
+        _TELEGRAM_LIMIT = 4000
+        pages: list[str] = []
+        current_lines: list[str] = [header]
+        current_len = len(header)
+
+        for entry in entries:
+            chunk = entry + "\n"
+            if current_len + len(chunk) > _TELEGRAM_LIMIT and len(current_lines) > 1:
+                pages.append("\n".join(current_lines))
+                current_lines = []
+                current_len = 0
+            current_lines.append(entry)
+            current_len += len(chunk)
+
+        if current_lines:
+            current_lines.append(footer)
+            pages.append("\n".join(current_lines))
+
+        for page in pages:
+            _send(chat_id, page)
 
     elif text.startswith("/groups"):
         from agent.tools.groups_tool import load_groups_with_names
