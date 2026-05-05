@@ -262,8 +262,6 @@ client.on('ready', async () => {
     return;
   }
 
-  log('info', `Connected. Watching ${watchedGroups.length} group(s). Checking for missed messages...`);
-
   // Cache group display names so the Telegram bot can show them in /groups.
   await saveGroupNames(watchedGroups);
 
@@ -273,7 +271,7 @@ client.on('ready', async () => {
   for (const groupId of watchedGroups) {
     await catchUp(groupId, snapshot[groupId] || 0);
   }
-  log('info', 'Ready — listening for new messages.');
+  log('info', `Ready — watching ${watchedGroups.length} group(s)`);
 });
 
 client.on('auth_failure', (m) => log('error', `auth_failure: ${m}`));

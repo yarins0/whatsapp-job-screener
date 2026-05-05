@@ -197,7 +197,7 @@ async def run_listener() -> None:
     entity_names: dict[int, str] = {entity.id: name for entity, name in resolved}
     entity_objects = [entity for entity, _ in resolved]
 
-    logger.info("Telegram source listener started — watching %d source(s)", len(resolved))
+    logger.info("Ready — watching %d Telegram source(s)", len(resolved))
 
     @client.on(events.NewMessage(chats=entity_objects))
     async def _on_message(event) -> None:
@@ -230,7 +230,6 @@ async def run_listener() -> None:
         except Exception as exc:
             logger.warning("[catch-up] Could not catch up on %s — skipping. %s: %s", source_name, type(exc).__name__, exc)
 
-    logger.info("Ready — listening for new messages")
     await client.run_until_disconnected()
 
 
@@ -240,4 +239,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         # Ctrl+C during asyncio.run() always re-raises KeyboardInterrupt after
         # cancelling pending tasks. This is normal shutdown, not an error.
-        logger.info("Telegram source listener stopped.")
+        pass
