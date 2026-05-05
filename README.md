@@ -139,7 +139,7 @@ agent/
     telegram_sources_tool.py   load_sources(), add_source(), remove_source() for telegram_sources.json
     query_tool.py              query_jobs() + format_jobs_telegram(); shared by CLI, /jobs, and /ask
     ask_tool.py                ask_jobs(); LLM extracts query params from natural language → query_jobs()
-  vector_store.py    index_job() + find_similar() + is_near_duplicate() + reindex_all(); ChromaDB wrapper
+  vector_store.py    index_job() + find_similar() + reindex_all(); ChromaDB wrapper for semantic search
 
 api/
   main.py            FastAPI: POST /ingest, GET /healthz

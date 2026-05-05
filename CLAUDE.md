@@ -70,7 +70,7 @@ A message may contain multiple job posts. The extractor normalises to a list via
 
 3. **Dedup** (`agent/tools/dedup_tool.py`) — atomic `INSERT OR IGNORE` on `seen_hashes` table.
 4. **Filter** (`agent/tools/filter_tool.py`) — calls `load_prefs()` from `agent/tools/prefs_tool.py` (reads `agent/prefs.json` on every call so Telegram-bot changes take effect immediately). Returns `(passed, reason)`.
-5. **Store** (`agent/tools/store_tool.py`) — checks for near-duplicate via the vector index, then inserts into `jobs` table. Returns the new row `id`, or `None` if the job was suppressed as a near-duplicate.
+5. **Store** (`agent/tools/store_tool.py`) — checks for a time-duplicate (same title+company within `DUPLICATE_WINDOW_DAYS` days), then inserts into `jobs` table. Returns the new row `id`, or `None` if the job was suppressed as a time-duplicate.
 6. **Notify** — sends an instant Telegram alert per stored job via `digest.digest._send_telegram`, with two inline buttons: **Block role** (adds lowercased title to blocklist) and **Block city** (only for non-remote jobs with a known location).
 
 ### Listener: `listener/listener.js`
@@ -102,17 +102,16 @@ The Telegram `/jobs` command uses the same `query_jobs()` + `format_jobs_telegra
 
 ### Vector search: `agent/vector_store.py`
 
-`vector_store.py` exposes four public functions:
+`vector_store.py` exposes three public functions:
 - `index_job(job_id, job, *, embedding_fn=None)` — embeds `"{title} at {company} — {summary} — Skills: …"` and upserts into a ChromaDB collection keyed by SQLite row id. Called automatically by `store_tool.store_job()` after every insert (errors are non-fatal).
-- `find_similar(text, n=5, *, embedding_fn=None)` — nearest-neighbour query in Chroma; fetches full job rows from SQLite for the returned ids; returns them in similarity order.
-- `is_near_duplicate(job, distance_threshold=0.3, *, embedding_fn=None) -> bool` — builds the same document text as `index_job` and queries for the single closest neighbour. Returns `True` if the L2 distance is ≤ `distance_threshold` (~95 % cosine similarity for normalised embeddings). Returns `False` when the index is empty. Called by `store_tool` before every `INSERT` to suppress cross-source near-duplicates.
+- `find_similar(text, n=5, *, embedding_fn=None)` — nearest-neighbour query in Chroma; fetches full job rows from SQLite for the returned ids; returns them in similarity order. Used by the `/similar` Telegram command.
 - `reindex_all(*, embedding_fn=None) -> int` — reads every row from `jobs` and upserts each into Chroma. Idempotent (safe to re-run). Returns the count of jobs processed. Exposed via the owner-only `/reindex` Telegram command.
 
 **Persistence:** ChromaDB writes to `db/chroma/` by default, configurable via the `CHROMA_DB_PATH` env var. The `temp_chroma` fixture (defined in `conftest.py`) points it at `tmp_path/chroma`.
 
 **Embedding model:** ChromaDB's default (`all-MiniLM-L6-v2` from `sentence-transformers`) — downloaded ~80 MB on first use, then runs offline. In tests, a `_FakeEmbeddingFunction` (deterministic, 8-dim vectors) is injected to avoid any download.
 
-**Graceful degradation:** if `chromadb` is not installed, all four functions are no-ops / return safe defaults (0 or `[]` or `False`).
+**Graceful degradation:** if `chromadb` is not installed, all three functions are no-ops / return safe defaults (`0` or `[]`).
 
 ### Key design decisions
 
@@ -122,8 +121,8 @@ The Telegram `/jobs` command uses the same `query_jobs()` + `format_jobs_telegra
 - **`PREFS_PATH` env var** — `prefs_tool` reads this to locate `agent/prefs.json`; the `temp_prefs` fixture overrides it per test.
 - **`GROUPS_PATH` env var** — `groups_tool` reads this to locate `agent/groups.json`; the `temp_groups` fixture overrides it per test.
 - **`CHROMA_DB_PATH` env var** — `vector_store` reads this to locate the ChromaDB persistence directory; the `temp_chroma` fixture (in `conftest.py`) overrides it per test. `temp_db` also sets `CHROMA_DB_PATH` so any test using a temp SQLite DB automatically gets an isolated Chroma too.
-- **Vector operations are non-fatal** — `store_tool._try_index_job` and `_try_is_near_duplicate` both wrap their Chroma calls in try/except so a missing or broken Chroma installation never stops a job from being stored in SQLite.
-- **Near-duplicate dedup** — `is_near_duplicate` returns `False` when the index is empty, so the very first posting of any text is never suppressed. The L2 `distance_threshold=0.3` corresponds to ~95 % cosine similarity for the `all-MiniLM-L6-v2` embeddings.
+- **Vector indexing is non-fatal** — `store_tool._try_index_job` wraps `index_job` in try/except so a missing or broken Chroma installation never stops a job from being stored in SQLite.
+- **Time-duplicate dedup** — `dedup_tool.is_time_duplicate(title, company)` queries `jobs` for a matching title+company within the last `DUPLICATE_WINDOW_DAYS` days (default 7). If `company` is `None` the check is skipped — unknown employers cannot reliably identify a duplicate. This prevents the same cross-group posting from being stored more than once per week.
 - **Dedup is atomic** — `INSERT OR IGNORE` + `rowcount` check eliminates the SELECT+INSERT race condition.
 - **Filter reads prefs on every call** — `filter_tool` calls `load_prefs()` each time so Telegram-bot changes take effect on the next message without a restart.
 - **Filter returns `(passed, reason)`** — the rejection reason propagates to the API log and the pipeline result.
@@ -171,7 +170,8 @@ Key test patterns:
 - Telegram bot command tests use `unittest.mock.patch("telegram_bot._send")` to capture replies without making real API calls.
 - Query tool tests use the `temp_db` fixture and insert rows directly via `sqlite3` to avoid going through the pipeline.
 - Ask tool tests inject `FakeListLLM` (scripted JSON responses) via the `llm` parameter; the bot handler tests patch `agent.tools.ask_tool._default_llm` to return the fake. Demo rate-limit tests manipulate `telegram_bot._ask_counts` directly.
-- Vector store tests (`test_vector_store.py`) use `temp_chroma` (from `conftest.py`) and inject a `_FakeEmbeddingFunction` to avoid downloading the sentence-transformer model. Store-tool integration tests patch `agent.vector_store.index_job` and `agent.vector_store.is_near_duplicate` (source module attributes, not local imports) to verify call-through behaviour.
+- Vector store tests (`test_vector_store.py`) use `temp_chroma` (from `conftest.py`) and inject a `_FakeEmbeddingFunction` to avoid downloading the sentence-transformer model. Store-tool integration tests patch `agent.vector_store.index_job` and `agent.tools.dedup_tool.is_time_duplicate` (source module attributes, not local imports) to verify call-through behaviour.
+- Time-duplicate tests (`test_dedup_and_store.py`) use `temp_db` and insert rows directly via `sqlite3`. The `within_days` parameter lets tests use a forced window without touching the env var.
 
 **Node.js (7 tests)** — Jest tests for `sources/whatsapp/last_seen.js`. Each test uses a unique tmp file path so tests never touch the real state file.
 
