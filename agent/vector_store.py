@@ -228,6 +228,16 @@ def is_near_duplicate(
     if not _CHROMA_AVAILABLE:
         return False
 
+    # A title-only document (no company, summary, or skills) is too generic to
+    # distinguish unique postings — "Full Stack Engineer" would falsely match any
+    # other job with the same title.  Skip the check unless at least one of the
+    # differentiating fields is present.
+    has_content = bool(
+        job.get("company") or job.get("summary") or job.get("skills")
+    )
+    if not has_content:
+        return False
+
     collection = _get_collection(embedding_fn)
     if collection.count() == 0:
         return False

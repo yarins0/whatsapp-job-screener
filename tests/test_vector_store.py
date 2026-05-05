@@ -262,6 +262,28 @@ def test_is_near_duplicate_empty_store_returns_false(temp_chroma, fake_ef):
     assert result is False
 
 
+def test_is_near_duplicate_title_only_returns_false(temp_db, temp_chroma, fake_ef):
+    """A job with only a title and no company/summary/skills is never flagged.
+
+    Generic titles like 'Full Stack Engineer' would produce false positives
+    if compared against other jobs with the same title but different details.
+    """
+    bare_job = {"title": "Full Stack Engineer", "company": None, "summary": None, "skills": []}
+
+    # Index an identical-looking job to make the store non-empty.
+    db_path = Path(temp_db)
+    conn = sqlite3.connect(db_path)
+    cur = conn.execute(
+        "INSERT INTO jobs (title, seen) VALUES (?, 0)", ("Full Stack Engineer",)
+    )
+    index_job(cur.lastrowid, bare_job, embedding_fn=fake_ef)
+    conn.commit()
+    conn.close()
+
+    result = is_near_duplicate(bare_job, embedding_fn=fake_ef)
+    assert result is False
+
+
 def test_is_near_duplicate_identical_text_returns_true(temp_db, temp_chroma, fake_ef):
     """A job identical to an indexed one should be flagged as a near-duplicate."""
     job = {"title": "Backend Engineer", "company": "TechCorp", "summary": "REST APIs"}
