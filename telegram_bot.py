@@ -27,12 +27,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 POLL_TIMEOUT = 30  # seconds for each long-poll request
 
-# The owner's chat ID is the only account allowed to run write commands.
-# Loaded once at startup; if unset, write commands are disabled for everyone.
-_OWNER_CHAT_ID: int | None = (
-    int(os.environ["TELEGRAM_CHAT_ID"]) if os.environ.get("TELEGRAM_CHAT_ID") else None
-)
-
 _READONLY_DENIED = (
     "🔒 This is a read-only demo. "
     "Only the owner can modify preferences and sources."
@@ -63,8 +57,15 @@ def _answer_callback(callback_id: str, text: str) -> None:
 
 
 def _is_owner(chat_id: int) -> bool:
-    """Return True if this chat_id belongs to the configured owner."""
-    return _OWNER_CHAT_ID is not None and chat_id == _OWNER_CHAT_ID
+    """Return True if this chat_id belongs to the configured owner.
+
+    Reads TELEGRAM_CHAT_ID from the environment on every call so that tests
+    can use monkeypatch.setenv without needing to reload the module.
+    """
+    owner_str = os.environ.get("TELEGRAM_CHAT_ID")
+    if not owner_str:
+        return False
+    return chat_id == int(owner_str)
 
 
 def _send(chat_id: int | str, text: str) -> None:

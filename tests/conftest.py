@@ -54,6 +54,16 @@ def temp_prefs(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
+def telegram_owner(monkeypatch):
+    """Set TELEGRAM_CHAT_ID=42 so write commands pass the owner check.
+
+    Matches the default chat_id used by _make_msg in test_telegram_commands.py.
+    _is_owner reads the env var on every call, so monkeypatch.setenv is enough.
+    """
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+
+
+@pytest.fixture()
 def sample_messages():
     import json
 

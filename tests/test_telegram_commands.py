@@ -13,7 +13,7 @@ def _make_msg(text: str, chat_id: int = 42) -> dict:
 # /blockrole
 # ---------------------------------------------------------------------------
 
-def test_blockrole_adds_keyword(temp_prefs):
+def test_blockrole_adds_keyword(temp_prefs, telegram_owner):
     from agent.tools.prefs_tool import load_prefs
     from telegram_bot import _handle_message
 
@@ -23,7 +23,7 @@ def test_blockrole_adds_keyword(temp_prefs):
     assert "devops" in load_prefs()["blocklist"]
 
 
-def test_blockrole_sends_confirmation(temp_prefs):
+def test_blockrole_sends_confirmation(temp_prefs, telegram_owner):
     from telegram_bot import _handle_message
 
     with patch("telegram_bot._send") as mock_send:
@@ -33,7 +33,7 @@ def test_blockrole_sends_confirmation(temp_prefs):
     assert "devops" in mock_send.call_args[0][1].lower()
 
 
-def test_blockrole_shows_usage_when_no_keyword(temp_prefs):
+def test_blockrole_shows_usage_when_no_keyword(temp_prefs, telegram_owner):
     from telegram_bot import _handle_message
 
     with patch("telegram_bot._send") as mock_send:
@@ -42,7 +42,7 @@ def test_blockrole_shows_usage_when_no_keyword(temp_prefs):
     assert "Usage" in mock_send.call_args[0][1]
 
 
-def test_blockrole_reports_duplicate(temp_prefs):
+def test_blockrole_reports_duplicate(temp_prefs, telegram_owner):
     from telegram_bot import _handle_message
 
     # "unpaid" is already in the fixture blocklist
@@ -56,7 +56,7 @@ def test_blockrole_reports_duplicate(temp_prefs):
 # /blockcity
 # ---------------------------------------------------------------------------
 
-def test_blockcity_adds_city(temp_prefs):
+def test_blockcity_adds_city(temp_prefs, telegram_owner):
     from agent.tools.prefs_tool import load_prefs
     from telegram_bot import _handle_message
 
@@ -66,7 +66,7 @@ def test_blockcity_adds_city(temp_prefs):
     assert "Beer Sheva" in load_prefs()["location_blocklist"]
 
 
-def test_blockcity_sends_confirmation(temp_prefs):
+def test_blockcity_sends_confirmation(temp_prefs, telegram_owner):
     from telegram_bot import _handle_message
 
     with patch("telegram_bot._send") as mock_send:
@@ -75,7 +75,7 @@ def test_blockcity_sends_confirmation(temp_prefs):
     assert "netanya" in mock_send.call_args[0][1].lower()
 
 
-def test_blockcity_shows_usage_when_no_city(temp_prefs):
+def test_blockcity_shows_usage_when_no_city(temp_prefs, telegram_owner):
     from telegram_bot import _handle_message
 
     with patch("telegram_bot._send") as mock_send:
@@ -88,7 +88,7 @@ def test_blockcity_shows_usage_when_no_city(temp_prefs):
 # /addrole
 # ---------------------------------------------------------------------------
 
-def test_addrole_adds_keyword(temp_prefs):
+def test_addrole_adds_keyword(temp_prefs, telegram_owner):
     from agent.tools.prefs_tool import load_prefs
     from telegram_bot import _handle_message
 
@@ -98,7 +98,7 @@ def test_addrole_adds_keyword(temp_prefs):
     assert "data engineer" in load_prefs()["roles"]
 
 
-def test_addrole_sends_confirmation(temp_prefs):
+def test_addrole_sends_confirmation(temp_prefs, telegram_owner):
     from telegram_bot import _handle_message
 
     with patch("telegram_bot._send") as mock_send:
@@ -107,7 +107,7 @@ def test_addrole_sends_confirmation(temp_prefs):
     assert "devops" in mock_send.call_args[0][1].lower()
 
 
-def test_addrole_shows_usage_when_no_keyword(temp_prefs):
+def test_addrole_shows_usage_when_no_keyword(temp_prefs, telegram_owner):
     from telegram_bot import _handle_message
 
     with patch("telegram_bot._send") as mock_send:
@@ -116,7 +116,7 @@ def test_addrole_shows_usage_when_no_keyword(temp_prefs):
     assert "Usage" in mock_send.call_args[0][1]
 
 
-def test_addrole_reports_duplicate(temp_prefs):
+def test_addrole_reports_duplicate(temp_prefs, telegram_owner):
     from telegram_bot import _handle_message
 
     # "backend" is already in the fixture roles list
