@@ -24,7 +24,7 @@ def store_job(job: dict) -> int | None:
     time-duplicate (same title + company stored within the last 7 days).
     """
     if _try_is_time_duplicate(job):
-        logger.info(
+        logger.debug(
             "Skipping time-duplicate job title=%r company=%r",
             job.get("title"),
             job.get("company"),

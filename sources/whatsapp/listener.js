@@ -163,8 +163,6 @@ async function catchUp(groupId, snapshotTimestamp) {
         console.error(`[catch-up] Failed to forward message:`, err.message);
       }
     }
-  } else {
-    console.log(`[catch-up] ${ltr(chat.name)}: no missed messages`);
   }
 
   // Advance the cursor to the newest message we just saw.
@@ -249,7 +247,7 @@ client.on('ready', async () => {
 
   if (watchedGroups.length === 0) {
     // Discovery mode: list all groups so the user can pick IDs.
-    console.log('\nConnected. groups.json is empty — fetching your groups...\n');
+    console.log('Connected. groups.json is empty — fetching your groups...');
     try {
       const chats = await client.getChats();
       const groups = chats.filter((c) => c.isGroup);
@@ -262,7 +260,7 @@ client.on('ready', async () => {
     return;
   }
 
-  console.log(`\nConnected. Watching ${watchedGroups.length} group(s). Checking for missed messages...\n`);
+  console.log(`Connected. Watching ${watchedGroups.length} group(s). Checking for missed messages...`);
 
   // Cache group display names so the Telegram bot can show them in /groups.
   await saveGroupNames(watchedGroups);
@@ -273,7 +271,7 @@ client.on('ready', async () => {
   for (const groupId of watchedGroups) {
     await catchUp(groupId, snapshot[groupId] || 0);
   }
-  console.log('\nReady — listening for new messages.\n');
+  console.log('Ready — listening for new messages.');
 });
 
 client.on('auth_failure', (m) => console.error('auth_failure:', m));

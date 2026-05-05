@@ -30,6 +30,8 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
+# APScheduler logs "Running job" and "Job executed successfully" on every poll tick — not useful.
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 API_URL = os.environ.get("INGEST_API_URL", "http://localhost:8000/ingest")
 INTERVAL_MINUTES = int(os.environ.get("WEB_SCRAPER_INTERVAL_MINUTES", "30"))
@@ -121,7 +123,7 @@ def poll() -> None:
 
     for key, scraper in scrapers:
         if not _is_enabled(config, key):
-            logger.info("%s scraper disabled in web_sources.json — skipping.", scraper.name)
+            logger.debug("%s scraper disabled in web_sources.json — skipping.", scraper.name)
             continue
         try:
             listings = scraper.fetch(keywords)

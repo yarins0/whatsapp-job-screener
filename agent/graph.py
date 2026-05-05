@@ -190,12 +190,12 @@ async def process_jobs(state: PipelineState) -> dict:
         }
         job_id = store_job(enriched)
         if job_id is None:
-            # store_job returns None when the job is a near-duplicate of one
-            # already in the vector index — treat it the same as a dedup skip.
-            skipped_jobs.append({"job": job, "reason": "near-duplicate"})
+            # store_job returns None when the job is a time-duplicate (same
+            # title+company stored within DUPLICATE_WINDOW_DAYS days).
+            skipped_jobs.append({"job": job, "reason": "time-duplicate"})
             continue
 
-        logger.info("Stored job id=%s title=%r", job_id, job.get("title"))
+        logger.debug("Stored job id=%s title=%r", job_id, job.get("title"))
         stored_jobs.append({**job, "job_id": job_id})
 
         # Notify — instant Telegram alert so good jobs aren't missed until the digest.

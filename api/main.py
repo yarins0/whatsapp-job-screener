@@ -12,9 +12,10 @@ from agent.pipeline import run_pipeline
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
-# Suppress noisy HTTP-level logs from the Anthropic SDK
+# Suppress noisy third-party loggers
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # hide "POST /ingest 200 OK" per request
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="WhatsApp Job Screener", version="0.1.0")
