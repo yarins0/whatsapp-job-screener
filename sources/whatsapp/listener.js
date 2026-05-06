@@ -102,6 +102,9 @@ async function reconnect() {
     // destroy() can throw if the browser frame is already detached — expected.
     log('warning', `[reconnect] destroy() failed: ${err.message}`);
   }
+  // Chrome holds a SingletonLock on the user data dir until it fully exits.
+  // Without this pause, initialize() races the lock release and fails.
+  await new Promise((resolve) => setTimeout(resolve, 3000));
   try {
     await client.initialize();
   } catch (err) {

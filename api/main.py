@@ -43,10 +43,21 @@ async def ingest(msg: Message) -> dict:
     result = await run_pipeline(msg.model_dump())
     action = result.get("action")
     if action == "stored":
-        title = (result.get("job") or {}).get("title", "unknown")
-        company = (result.get("job") or {}).get("company", "?")
-        logger.info("STORED   | %s @ %s | id=%s", title, company, result.get("job_id"))
+        job = result.get("job") or {}
+        title = job.get("title") or "unknown"
+        company = job.get("company") or "?"
+        location = "Remote" if job.get("remote") else (job.get("location") or "")
+        loc_part = f" ({location})" if location else ""
+        logger.info("STORED   | %s @ %s%s | id=%s", title, company, loc_part, result.get("job_id"))
     else:
         reason = result.get("reason", "unknown")
-        logger.info("SKIPPED  | %s | group=%s", reason, msg.group)
+        job = result.get("job") or {}
+        title = job.get("title") or ""
+        company = job.get("company") or ""
+        location = "Remote" if job.get("remote") else (job.get("location") or "")
+        if title:
+            loc_part = f" ({location})" if location else ""
+            logger.info("SKIPPED  | %s | %s @ %s%s | group=%s", reason, title, company, loc_part, msg.group)
+        else:
+            logger.info("SKIPPED  | %s | group=%s", reason, msg.group)
     return {"status": "ok", "result": result}
