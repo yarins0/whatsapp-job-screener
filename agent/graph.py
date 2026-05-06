@@ -333,6 +333,13 @@ _pipeline_graph = build_pipeline_graph()
 # Telegram notification helper (moved here from pipeline.py)
 # ---------------------------------------------------------------------------
 
+def _md(text: str) -> str:
+    """Escape characters special in Telegram Markdown V1: _ * ` ["""
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
 def _notify_job(job: dict, job_id: int) -> None:
     """Send a single-job Telegram notification with inline feedback buttons.
 
@@ -349,9 +356,9 @@ def _notify_job(job: dict, job_id: int) -> None:
         summary = job.get("summary") or ""
         contact = job.get("contact") or "see original message"
 
-        lines = [f"New job: *{title}* @ {company} ({loc})"]
+        lines = [f"New job: *{_md(title)}* @ {_md(company)} ({_md(loc)})"]
         if summary:
-            lines.append(summary)
+            lines.append(_md(summary[:200]))
         lines.append(f"Contact: {contact}")
 
         # Callback data is capped at 64 bytes by the Telegram API.

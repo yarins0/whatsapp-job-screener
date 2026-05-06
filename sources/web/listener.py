@@ -111,6 +111,13 @@ def _process_job(job: dict, source_name: str) -> str:
     return "stored"
 
 
+def _md(text: str) -> str:
+    """Escape characters special in Telegram Markdown V1: _ * ` ["""
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
 def _notify_job(job: dict, job_id: int) -> None:
     """Send a Telegram notification with inline block buttons for a stored job."""
     try:
@@ -123,9 +130,9 @@ def _notify_job(job: dict, job_id: int) -> None:
         summary = job.get("summary") or ""
         contact = job.get("contact") or "see original posting"
 
-        lines = [f"New job: *{title}* @ {company} ({loc})"]
+        lines = [f"New job: *{_md(title)}* @ {_md(company)} ({_md(loc)})"]
         if summary:
-            lines.append(summary[:200])
+            lines.append(_md(summary[:200]))
         lines.append(f"Contact: {contact}")
 
         role_kw = title.lower()[:40]
