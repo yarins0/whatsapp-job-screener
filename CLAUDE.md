@@ -36,16 +36,23 @@ python -m agent.pipeline
 
 # Start everything (API + listener + digest scheduler)
 python start.py
+
+# Debug web scrapers — inspect live HTML and extracted fields
+python -m sources.web.scrapers.alljobs          # fetches "python" + "backend" by default
+python -m sources.web.scrapers.alljobs fullstack
+python -m sources.web.scrapers.indeed
 ```
 
 ## Architecture
 
-This is a single-user LangChain learning project. Messages flow:
+This is a single-user LangChain learning project. Messages flow from two source types:
 
 ```
-WhatsApp (Node.js listener) → POST /ingest (FastAPI) → run_pipeline() → SQLite → Telegram (instant)
-                                                                              ↓
-                                                              Daily digest (APScheduler)
+WhatsApp (Node.js listener)  ─┐
+Telegram channels (Telethon) ─┤─► POST /ingest (FastAPI) ─► run_pipeline() ─► SQLite ─► Telegram (instant)
+                               │                                                    ↓
+Web scrapers (AllJobs etc.)  ──┘─► direct: dedup→filter→store→notify          Daily digest
+                                   (no HTTP, no LLM)                          (APScheduler)
 ```
 
 ### Core flow: `agent/pipeline.py` + `agent/graph.py`
@@ -68,16 +75,64 @@ In both modes, stats are recorded via `record_message(group, is_job_post)` insid
 
 A message may contain multiple job posts. The extractor normalises to a list via `_normalise_jobs`; `process_jobs` loops over every job:
 
-3. **Dedup** (`agent/tools/dedup_tool.py`) — atomic `INSERT OR IGNORE` on `seen_hashes` table.
-4. **Filter** (`agent/tools/filter_tool.py`) — calls `load_prefs()` from `agent/tools/prefs_tool.py` (reads `agent/prefs.json` on every call so Telegram-bot changes take effect immediately). Returns `(passed, reason)`.
-5. **Store** (`agent/tools/store_tool.py`) — checks for a time-duplicate (same title+company within `DUPLICATE_WINDOW_DAYS` days), then inserts into `jobs` table. Returns the new row `id`, or `None` if the job was suppressed as a time-duplicate.
-6. **Notify** — sends an instant Telegram alert per stored job via `digest.digest._send_telegram`, with two inline buttons: **Block role** (adds lowercased title to blocklist) and **Block city** (only for non-remote jobs with a known location).
+1. **Dedup** (`agent/tools/dedup_tool.py`) — atomic `INSERT OR IGNORE` on `seen_hashes` table.
+2. **Filter** (`agent/tools/filter_tool.py`) — calls `load_prefs()` from `agent/tools/prefs_tool.py` (reads `agent/prefs.json` on every call so Telegram-bot changes take effect immediately). Returns `(passed, reason)`.
+3. **Store** (`agent/tools/store_tool.py`) — checks for a time-duplicate (same title+company within `DUPLICATE_WINDOW_DAYS` days), then inserts into `jobs` table. Returns the new row `id`, or `None` if suppressed as a time-duplicate.
+4. **Notify** — sends an instant Telegram alert per stored job via `digest.digest._send_telegram`, with two inline buttons: **Block role** and **Block city**. Text is escaped for Telegram Markdown V1 via `_md()` in `graph.py`.
 
-### Listener: `listener/listener.js`
+### Ingest API: `api/main.py`
 
-On `ready`, the listener reads watched group IDs from `agent/groups.json` (a `{id: name}` map), calls `saveGroupNames()` to resolve and cache display names back into the same file, then calls `catchUp()` for each group. The `message` event handler re-reads `groups.json` on every message so `/addgroup` and `/removegroup` take effect immediately without a restart.
+FastAPI endpoint at `POST /ingest`. Receives `{group, sender, text, timestamp}` from WhatsApp and Telegram source listeners.
 
-`listener/last_seen.js` — extracted state module (`load`, `save`, `update`). Accepts a custom file path, which is how Jest tests isolate state without touching the real file.
+**Retry queue:** If `run_pipeline()` raises any exception (e.g. `anthropic.APIConnectionError` on a network blip), the message is enqueued for up to 3 retries with 30s / 2min / 5min backoff. Three async workers drain the queue concurrently. The queue is in-memory (lost on restart) and capped at 500 items. Started via FastAPI `lifespan`.
+
+**Log format:** Every processed message logs one of:
+```
+STORED   | Job Title @ Company (Location) | id=N
+SKIPPED  | reason | Job Title @ Company (Location) | group=Name
+```
+
+### WhatsApp listener: `sources/whatsapp/listener.js`
+
+On `ready`, reads watched group IDs from `agent/whatsapp_sources.json` (a `{id: name}` map), resolves display names, and calls `catchUp()` for each group. Re-reads the groups file on every `message` event so `/addgroup` and `/removegroup` take effect immediately.
+
+**Reconnect:** The heartbeat (every 2 min) calls `getState()`. If disconnected, calls `reconnect()` which runs `destroy()` → 3-second pause → `initialize()`. The pause is required because Chrome holds a `SingletonLock` on its user data dir until it fully exits; calling `initialize()` without waiting produces a "browser already running" error.
+
+`sources/whatsapp/last_seen.js` — state module (`load`, `save`, `update`). Accepts a custom file path for Jest test isolation.
+
+### Telegram source listener: `sources/telegram/listener.py`
+
+Telethon userbot that watches broadcast channels the Telegram account is a member of. On startup, resolves all configured sources, replays missed messages (up to 48h back), then listens for new ones. Forwards to `/ingest` in the same format as the WhatsApp listener.
+
+Config: `agent/telegram_sources.json` — `{channel_id_or_username: display_name}`.
+
+### Web source listener: `sources/web/listener.py`
+
+Polls enabled scrapers on a configurable interval (default: 30 min). **Does not use the HTTP API or LLM.** Each scraper extracts structured job dicts directly from HTML/XML, then the listener applies the same tools as the pipeline:
+
+```
+scraper.fetch(keywords) → [dict]
+  └─ (title, company) in-memory dedup (within-poll, across keywords)
+       └─ is_duplicate(job)    ← SQLite seen_hashes, cross-poll
+            └─ filter_job(job) ← prefs.json blocklist/roles/location
+                 └─ store_job()← SQLite + ChromaDB vector index
+                      └─ _notify_job() ← Telegram alert
+```
+
+Config: `agent/web_sources.json` — `{scraper_key: {enabled: bool}}`.
+
+**Scrapers** (`sources/web/scrapers/`):
+
+- **`_utils.py`** — shared: `USER_AGENTS` pool (5 UAs), `random_headers()`, `fetch_with_retry(url, max_retries=3)` with exponential backoff + jitter on connection errors and 5xx/429.
+- **`alljobs.py`** (`AllJobsScraper`) — AllJobs.co.il guest search. CSS selectors confirmed against live HTML:
+  - Title: `.job-content-top-title a` (link text only)
+  - Company: `.job-content-top-title .T14`
+  - Location: `.job-content-top-location` (strips `מיקום:` label prefix)
+  - Summary: `.job-content-top-desc.AR`
+  - Contact: absolute job URL from title link href
+- **`indeed.py`** (`IndeedScraper`) — Indeed Israel RSS feed (`il.indeed.com/rss?q=...`). Parses XML with stdlib `xml.etree.ElementTree`. Currently disabled in `web_sources.json` (RSS returns 403).
+
+Run `python -m sources.web.scrapers.alljobs` to print live HTML of the first card and extracted fields — useful when AllJobs changes their markup.
 
 ### Telegram bot: `telegram_bot.py`
 
@@ -95,85 +150,76 @@ Access control: the owner is identified by `TELEGRAM_CHAT_ID`. Write/discovery c
 
 `list_jobs.py` is the CLI entry point (`python -m agent.list_jobs`). It calls `query_jobs()` and prints a fixed-width terminal table. Flags: `--days N`, `--role KEYWORD`, `--unseen`, `--limit N`.
 
-The Telegram `/jobs` command uses the same `query_jobs()` + `format_jobs_telegram()` path, so both surfaces always produce consistent results from the same query logic.
-
 `ask_tool.py` exposes one public function:
-- `ask_jobs(question, *, llm=None) -> str` — builds an LCEL chain (`prompt | llm | JsonOutputParser`) that extracts `{days, role, unseen_only, limit}` from a natural-language question, then calls `query_jobs()` and returns a formatted string. Falls back to a keyword search on the raw question if the LLM response cannot be parsed. The `llm` parameter is injectable so tests can pass `FakeListLLM` and run offline.
+- `ask_jobs(question, *, llm=None) -> str` — builds an LCEL chain that extracts `{days, role, unseen_only, limit}` from a natural-language question, calls `query_jobs()`, and returns a formatted string.
 
 ### Vector search: `agent/vector_store.py`
 
-`vector_store.py` exposes three public functions:
-- `index_job(job_id, job, *, embedding_fn=None)` — embeds `"{title} at {company} — {summary} — Skills: …"` and upserts into a ChromaDB collection keyed by SQLite row id. Called automatically by `store_tool.store_job()` after every insert (errors are non-fatal).
-- `find_similar(text, n=5, *, embedding_fn=None)` — nearest-neighbour query in Chroma; fetches full job rows from SQLite for the returned ids; returns them in similarity order. Used by the `/similar` Telegram command.
-- `reindex_all(*, embedding_fn=None) -> int` — reads every row from `jobs` and upserts each into Chroma. Idempotent (safe to re-run). Returns the count of jobs processed. Exposed via the owner-only `/reindex` Telegram command.
+- `index_job(job_id, job)` — embeds `"{title} at {company} — {summary} — Skills: …"` and upserts into ChromaDB. Called by `store_tool.store_job()` after every insert (errors are non-fatal).
+- `find_similar(text, n=5)` — nearest-neighbour query; used by `/similar`.
+- `reindex_all()` — back-fills ChromaDB from all SQLite rows; used by `/reindex`.
 
-**Persistence:** ChromaDB writes to `db/chroma/` by default, configurable via the `CHROMA_DB_PATH` env var. The `temp_chroma` fixture (defined in `conftest.py`) points it at `tmp_path/chroma`.
-
-**Embedding model:** ChromaDB's default (`all-MiniLM-L6-v2` from `sentence-transformers`) — downloaded ~80 MB on first use, then runs offline. In tests, a `_FakeEmbeddingFunction` (deterministic, 8-dim vectors) is injected to avoid any download.
-
-**Graceful degradation:** if `chromadb` is not installed, all three functions are no-ops / return safe defaults (`0` or `[]`).
+**Persistence:** `db/chroma/` by default, configurable via `CHROMA_DB_PATH`. **Graceful degradation:** if `chromadb` is not installed, all three are no-ops.
 
 ### Key design decisions
 
-- **Pipeline is a LangGraph `StateGraph`** — `agent/graph.py` defines nodes and conditional edges; `pipeline.py` delegates via `ainvoke`. Easier to extend, visualise, and add per-node retries than a flat `if/elif` body.
+- **Web scrapers bypass LLM** — structured data (title, company, location) is extracted from HTML/XML directly. The API and LLM are only used for WhatsApp and Telegram source messages.
+- **Web scraper dedup is two-layer** — in-memory `(title, company)` set within each `fetch()` call (across keywords, one poll), then `is_duplicate(job)` against SQLite `seen_hashes` (across polls).
+- **Pipeline is a LangGraph `StateGraph`** — `agent/graph.py` defines nodes and conditional edges; `pipeline.py` delegates via `ainvoke`.
 - **`llm` is injected** — `_default_llm()` lazy-imports `langchain_anthropic` so tests run offline with `FakeListChatModel`.
-- **`JOBS_DB_PATH` env var** — all DB modules (`dedup_tool`, `store_tool`, `stats_tool`, `init_db`) read this env var; the `temp_db` pytest fixture sets it to a `tmp_path` file, isolating test state.
-- **`PREFS_PATH` env var** — `prefs_tool` reads this to locate `agent/prefs.json`; the `temp_prefs` fixture overrides it per test.
-- **`GROUPS_PATH` env var** — `groups_tool` reads this to locate `agent/groups.json`; the `temp_groups` fixture overrides it per test.
-- **`CHROMA_DB_PATH` env var** — `vector_store` reads this to locate the ChromaDB persistence directory; the `temp_chroma` fixture (in `conftest.py`) overrides it per test. `temp_db` also sets `CHROMA_DB_PATH` so any test using a temp SQLite DB automatically gets an isolated Chroma too.
-- **Vector indexing is non-fatal** — `store_tool._try_index_job` wraps `index_job` in try/except so a missing or broken Chroma installation never stops a job from being stored in SQLite.
-- **Time-duplicate dedup** — `dedup_tool.is_time_duplicate(title, company)` queries `jobs` for a matching title+company within the last `DUPLICATE_WINDOW_DAYS` days (default 7). If `company` is `None` the check is skipped — unknown employers cannot reliably identify a duplicate. This prevents the same cross-group posting from being stored more than once per week.
-- **Dedup is atomic** — `INSERT OR IGNORE` + `rowcount` check eliminates the SELECT+INSERT race condition.
-- **Filter reads prefs on every call** — `filter_tool` calls `load_prefs()` each time so Telegram-bot changes take effect on the next message without a restart.
-- **Filter returns `(passed, reason)`** — the rejection reason propagates to the API log and the pipeline result.
-- **Extractor returns a list** — the LLM may return one job or several for a message with multiple postings; the pipeline normalises to a list and processes each job independently.
-- **Stats are advisory** — `stats_tool` errors are caught and logged as warnings; they never interrupt the pipeline.
-- **Combined mode fallback** — if the combined chain fails (e.g. parse error), the pipeline falls back to separate mode automatically.
-- **Telegram bot uses long-polling** — no public URL or webhook required; works locally and on a remote server.
+- **`JOBS_DB_PATH` env var** — all DB modules read this; the `temp_db` pytest fixture sets it to a `tmp_path` file.
+- **`PREFS_PATH` env var** — `prefs_tool` reads this to locate `agent/prefs.json`; `temp_prefs` overrides it per test.
+- **`GROUPS_PATH` env var** — `groups_tool` reads this to locate `agent/whatsapp_sources.json`; `temp_groups` overrides it per test.
+- **`CHROMA_DB_PATH` env var** — `vector_store` reads this; `temp_chroma` overrides it per test. `temp_db` also sets it so tests using a temp SQLite DB get an isolated Chroma too.
+- **Vector indexing is non-fatal** — `store_tool._try_index_job` wraps `index_job` in try/except so a missing Chroma never stops SQLite storage.
+- **Time-duplicate dedup** — `is_time_duplicate(title, company)` queries `jobs` for matching title+company within `DUPLICATE_WINDOW_DAYS` days. Skipped when `company` is `None`.
+- **Dedup is atomic** — `INSERT OR IGNORE` + `rowcount` eliminates the SELECT+INSERT race.
+- **Filter reads prefs on every call** — Telegram-bot changes take effect on the next message without a restart.
+- **Retry queue** — `api/main.py` catches all pipeline exceptions and enqueues retries; the WhatsApp/Telegram listeners never see a 500.
+- **Telegram Markdown escaping** — `_md(text)` in `graph.py` and `listener.py` escapes `_`, `*`, `` ` ``, `[` before including user content in notification messages (Telegram Markdown V1 returns 400 on unescaped special chars).
 - **Model** — `claude-haiku-4-5-20251001` in production (cheap, fast).
 
 ### User preferences
 
-Edit `agent/prefs.json` directly, or use Telegram commands (`/blockrole`, `/blockcity`, `/addrole`). The filter reads the file on every call so changes take effect on the next incoming message without a restart.
+Edit `agent/prefs.json` directly, or use Telegram commands (`/blockrole`, `/blockcity`, `/addrole`). The filter reads the file on every call.
 
-Fields: `roles` (keyword allow-list on title+summary), `blocklist` (auto-reject keywords on title/summary/skills), `location_blocklist` (cities to reject — everything else passes, remote always passes).
-
-`agent/memory.py` now only contains the `UserPreferences` TypedDict — it is no longer the source of truth for preferences.
+Fields: `roles` (keyword allow-list on title+summary), `blocklist` (auto-reject on title/summary/skills), `location_blocklist` (cities to reject — remote always passes).
 
 ### Watched groups
 
-`agent/groups.json` — a `{group_id: display_name}` map. Add/remove entries directly or via `/addgroup` / `/removegroup` in Telegram. The listener re-reads this file on every message event so removals and additions of groups take effect immediately; catch-up replay for newly added groups happens on the next listener restart.
+`agent/whatsapp_sources.json` — `{group_id: display_name}`. Add/remove via `/addgroup` / `/removegroup` in Telegram or edit directly. The listener re-reads on every message event.
 
 ### Database
 
 `db/schema.sql` defines three tables:
 - `jobs` — stored job posts; `seen` column flipped to `1` after the digest runs.
-- `seen_hashes` — MD5 hashes of `title+company+contact` for dedup.
-- `group_stats` — cumulative `total_messages` / `job_post_messages` per group; drives adaptive mode selection.
+- `seen_hashes` — MD5 hashes for dedup (both `title+company+contact` structured hashes and `raw:` prefix hashes for web scraper raw text).
+- `group_stats` — cumulative message counts per group; drives adaptive mode selection.
 
 Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXISTS` so re-running is safe.
 
 ### Tests
 
-**Python (118 tests)** — all run offline. `conftest.py` provides:
-- `temp_db` — creates a fresh isolated DB (all three tables), sets `JOBS_DB_PATH` **and** `CHROMA_DB_PATH` (so any test that calls `store_job` never touches the real vector index)
-- `temp_chroma` — sets `CHROMA_DB_PATH` to `tmp_path/chroma`; use in tests that need Chroma without a full DB
+**Python (121 tests)** — all run offline. `conftest.py` provides:
+- `temp_db` — creates a fresh isolated DB (all three tables), sets `JOBS_DB_PATH` and `CHROMA_DB_PATH`
+- `temp_chroma` — sets `CHROMA_DB_PATH` to `tmp_path/chroma`
 - `temp_prefs` — writes a minimal `prefs.json` to a temp file and sets `PREFS_PATH`
-- `temp_groups` — writes an empty `whatsapp_sources.json` map to a temp file and sets `GROUPS_PATH`
-- `telegram_owner` — sets `TELEGRAM_CHAT_ID=42` so write commands pass `_is_owner`; needed by all write-command bot tests
+- `temp_groups` — writes an empty map to a temp file and sets `GROUPS_PATH`
+- `telegram_owner` — sets `TELEGRAM_CHAT_ID=42` so write commands pass `_is_owner`
 - `sample_messages` — loads `tests/sample_messages.json`
 
 Key test patterns:
-- Pipeline tests pass scripted JSON to `FakeListChatModel`; separate mode needs two responses (classify, then extract); combined mode needs one combined response.
-- To force combined mode in a pipeline test, insert a row into `group_stats` with `total_messages=100, job_post_messages=95` before calling `run_pipeline`.
-- Stats tool tests use `monkeypatch.setenv("JOBS_DB_PATH", ...)` directly, bypassing the `temp_db` fixture where needed.
-- Telegram bot command tests use `unittest.mock.patch("telegram_bot._send")` to capture replies without making real API calls.
-- Query tool tests use the `temp_db` fixture and insert rows directly via `sqlite3` to avoid going through the pipeline.
-- Ask tool tests inject `FakeListLLM` (scripted JSON responses) via the `llm` parameter; the bot handler tests patch `agent.tools.ask_tool._default_llm` to return the fake. Demo rate-limit tests manipulate `telegram_bot._ask_counts` directly.
-- Vector store tests (`test_vector_store.py`) use `temp_chroma` (from `conftest.py`) and inject a `_FakeEmbeddingFunction` to avoid downloading the sentence-transformer model. Store-tool integration tests patch `agent.vector_store.index_job` and `agent.tools.dedup_tool.is_time_duplicate` (source module attributes, not local imports) to verify call-through behaviour.
-- Time-duplicate tests (`test_dedup_and_store.py`) use `temp_db` and insert rows directly via `sqlite3`. The `within_days` parameter lets tests use a forced window without touching the env var.
+- Pipeline tests pass scripted JSON to `FakeListChatModel`; separate mode needs two responses (classify, then extract); combined mode needs one.
+- To force combined mode in a pipeline test, insert a row into `group_stats` with `total_messages=100, job_post_messages=95`.
+- Stats tool tests use `monkeypatch.setenv("JOBS_DB_PATH", ...)` directly.
+- Telegram bot command tests patch `telegram_bot._send` to capture replies.
+- Query tool tests use `temp_db` and insert rows directly via `sqlite3`.
+- Ask tool tests inject `FakeListLLM` via the `llm` parameter.
+- Vector store tests use `temp_chroma` and inject `_FakeEmbeddingFunction`.
+- Store-tool integration tests patch `agent.vector_store.index_job` and `agent.tools.dedup_tool.is_time_duplicate` (source module attributes).
+- Time-duplicate tests use `temp_db`; the `within_days` parameter avoids touching the env var.
 
-**Node.js (7 tests)** — Jest tests for `sources/whatsapp/last_seen.js`. Each test uses a unique tmp file path so tests never touch the real state file.
+**Node.js (14 tests)** — Jest tests for `sources/whatsapp/last_seen.js`. Each test uses a unique tmp file path.
 
 ## Environment variables
 
@@ -197,6 +243,7 @@ Copy `.env.example` to `.env` and fill in:
 | `TELEGRAM_API_HASH` | No (Telegram source) | Same page as `TELEGRAM_API_ID` |
 | `TELEGRAM_PHONE` | No (Telegram source) | Phone number for the Telethon userbot, e.g. `+972501234567` |
 | `WEB_SCRAPER_INTERVAL_MINUTES` | No | Web scraper poll interval (default: 30) |
+| `INGEST_API_URL` | No | Ingest endpoint for WhatsApp/Telegram listeners (default: `http://localhost:8000/ingest`) |
 | `LANGSMITH_API_KEY` | No | LangSmith tracing |
 | `LANGSMITH_TRACING` | No | Set to `true` to enable tracing |
 | `LANGSMITH_ENDPOINT` | No | LangSmith API endpoint (defaults to `https://api.smith.langchain.com`) |
