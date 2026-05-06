@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -14,15 +17,90 @@ load_dotenv()
 for _lvl, _name in [(10, "debug"), (20, "info"), (30, "warning"), (40, "error"), (50, "critical")]:
     logging.addLevelName(_lvl, _name)
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s][%(levelname)s] %(message)s", datefmt="%H:%M:%S")
-# Suppress noisy third-party loggers
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # hide "POST /ingest 200 OK" per request
-logging.getLogger("uvicorn.error").setLevel(logging.WARNING)   # hide "Started server process / Uvicorn running on…" startup lines
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="WhatsApp Job Screener", version="0.1.0")
+# ---------------------------------------------------------------------------
+# Retry queue
+# ---------------------------------------------------------------------------
 
+# Seconds to wait before each successive retry attempt.
+_RETRY_DELAYS_S: tuple[int, ...] = (30, 120, 300)
+_MAX_RETRIES = len(_RETRY_DELAYS_S)
+
+# Each item: (retry_at: float, attempt: int, msg_data: dict)
+# maxsize caps memory usage; excess messages are dropped with a log.error.
+_retry_queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+
+
+def _enqueue_retry(msg_data: dict, attempt: int) -> None:
+    delay = _RETRY_DELAYS_S[attempt]
+    retry_at = time.monotonic() + delay
+    try:
+        _retry_queue.put_nowait((retry_at, attempt, msg_data))
+    except asyncio.QueueFull:
+        logger.error(
+            "Retry queue full — message dropped: group=%s text=%r",
+            msg_data.get("group"), (msg_data.get("text") or "")[:60],
+        )
+
+
+async def _retry_worker() -> None:
+    """Drain the retry queue: wait until retry_at, run the pipeline, re-enqueue on failure."""
+    while True:
+        retry_at, attempt, msg_data = await _retry_queue.get()
+        try:
+            wait = retry_at - time.monotonic()
+            if wait > 0:
+                await asyncio.sleep(wait)
+
+            result = await run_pipeline(msg_data)
+            action = result.get("action", "unknown")
+            logger.info(
+                "Retry %d/%d succeeded (action=%s) — group=%s",
+                attempt + 1, _MAX_RETRIES, action, msg_data.get("group"),
+            )
+        except Exception as exc:
+            next_attempt = attempt + 1
+            if next_attempt < _MAX_RETRIES:
+                next_delay = _RETRY_DELAYS_S[next_attempt]
+                logger.warning(
+                    "Retry %d/%d failed, will retry in %ds — group=%s: %s",
+                    attempt + 1, _MAX_RETRIES, next_delay,
+                    msg_data.get("group"), type(exc).__name__,
+                )
+                _enqueue_retry(msg_data, next_attempt)
+            else:
+                logger.error(
+                    "Message dropped after %d retries — group=%s text=%r: %s",
+                    _MAX_RETRIES, msg_data.get("group"),
+                    (msg_data.get("text") or "")[:60], type(exc).__name__,
+                )
+        finally:
+            _retry_queue.task_done()
+
+
+# ---------------------------------------------------------------------------
+# App lifespan — start retry workers on boot
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    workers = [asyncio.create_task(_retry_worker()) for _ in range(3)]
+    yield
+    for w in workers:
+        w.cancel()
+
+
+app = FastAPI(title="WhatsApp Job Screener", version="0.1.0", lifespan=lifespan)
+
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
 
 class Message(BaseModel):
     """Payload posted by listener.js for every WhatsApp group message."""
@@ -33,6 +111,10 @@ class Message(BaseModel):
     timestamp: int = Field(..., description="Unix epoch seconds")
 
 
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -40,7 +122,16 @@ async def healthz() -> dict[str, str]:
 
 @app.post("/ingest")
 async def ingest(msg: Message) -> dict:
-    result = await run_pipeline(msg.model_dump())
+    try:
+        result = await run_pipeline(msg.model_dump())
+    except Exception as exc:
+        logger.warning(
+            "Pipeline error, queuing retry 1/%d in %ds — group=%s: %s",
+            _MAX_RETRIES, _RETRY_DELAYS_S[0], msg.group, type(exc).__name__,
+        )
+        _enqueue_retry(msg.model_dump(), attempt=0)
+        return {"status": "queued_for_retry", "reason": type(exc).__name__}
+
     action = result.get("action")
     if action == "stored":
         job = result.get("job") or {}
@@ -60,4 +151,5 @@ async def ingest(msg: Message) -> dict:
             logger.info("SKIPPED  | %s | %s @ %s%s | group=%s", reason, title, company, loc_part, msg.group)
         else:
             logger.info("SKIPPED  | %s | group=%s", reason, msg.group)
+
     return {"status": "ok", "result": result}

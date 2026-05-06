@@ -1,6 +1,6 @@
 {
   "alljobs": {
-    "enabled": false
+    "enabled": true
   },
   "indeed": {
     "enabled": false

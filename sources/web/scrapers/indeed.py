@@ -1,17 +1,10 @@
-"""Indeed Israel scraper — fetches job listings from il.indeed.com.
+"""Indeed Israel scraper — fetches job listings via Indeed's RSS feed.
 
-Uses requests + BeautifulSoup to parse the job cards returned by Indeed's
-server-rendered search results.
+Indeed publishes an official RSS feed for job searches. It yields structured
+data (title, company, description) directly — no LLM extraction needed.
 
-Search URL pattern:
-  https://il.indeed.com/jobs?q={keyword}&l=Israel&sort=date&fromage=3
-
-NOTE: Indeed actively blocks automated scraping. This scraper uses a realistic
-User-Agent and a conservative request rate. If Indeed blocks requests (HTTP 403
-or empty results), consider:
-  1. Adding longer delays between requests (DELAY_BETWEEN_REQUESTS_S)
-  2. Using rotating proxies or a headless browser (Playwright)
-  3. Falling back to the Indeed RSS feed if re-enabled
+Feed URL pattern:
+  https://il.indeed.com/rss?q={keyword}&l=Israel&sort=date&fromage=3
 
 Run standalone to inspect what the scraper returns:
     python -m sources.web.scrapers.indeed
@@ -20,91 +13,115 @@ Run standalone to inspect what the scraper returns:
 from __future__ import annotations
 
 import logging
+import random
+import re
 import time
+import xml.etree.ElementTree as ET
 
 from sources.web.scrapers.base import JobScraper
+from sources.web.scrapers._utils import fetch_with_retry, random_headers
 
 logger = logging.getLogger(__name__)
 
-_SEARCH_URL = "https://il.indeed.com/jobs?q={keyword}&l=Israel&sort=date&fromage=3"
+_RSS_URL = "https://il.indeed.com/rss?q={keyword}&l=Israel&sort=date&fromage=3"
 
-# Seconds to wait between requests to reduce the chance of rate-limiting.
-DELAY_BETWEEN_REQUESTS_S = 5
-
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-}
+_DELAY_BETWEEN_KEYWORDS_S = (3.0, 7.0)
 
 
 class IndeedScraper(JobScraper):
     name = "Indeed"
 
-    def fetch(self, keywords: list[str]) -> list[str]:
-        """Fetch job cards from Indeed Israel for each keyword."""
-        try:
-            import requests
-            from bs4 import BeautifulSoup
-        except ImportError as exc:
-            logger.error("Missing dependency: %s — run: pip install beautifulsoup4 lxml requests", exc)
-            return []
-
-        seen_ids: set[str] = set()
-        results: list[str] = []
+    def fetch(self, keywords: list[str]) -> list[dict]:
+        """Fetch job listings from the Indeed Israel RSS feed for each keyword."""
+        # Dedup key: (title, company) — same posting may appear under multiple keywords.
+        seen: set[tuple[str, str]] = set()
+        results: list[dict] = []
 
         for i, keyword in enumerate(keywords):
             if i > 0:
-                # Polite delay between keyword searches to avoid rate-limiting.
-                time.sleep(DELAY_BETWEEN_REQUESTS_S)
+                time.sleep(random.uniform(*_DELAY_BETWEEN_KEYWORDS_S))
 
-            url = _SEARCH_URL.format(keyword=keyword.replace(" ", "+"))
+            url = _RSS_URL.format(keyword=keyword.replace(" ", "+"))
             try:
-                resp = requests.get(url, headers=_HEADERS, timeout=20)
+                resp = fetch_with_retry(url, headers=random_headers())
                 if resp.status_code == 403:
                     logger.warning("Indeed blocked request (403) for keyword '%s' — skipping.", keyword)
                     continue
                 resp.raise_for_status()
-                cards = _parse_cards(resp.text, BeautifulSoup)
-                new_cards = [c for job_id, c in cards if job_id not in seen_ids]
-                seen_ids.update(job_id for job_id, _ in cards)
-                results.extend(new_cards)
-                logger.info("Indeed '%s': %d card(s) found", keyword, len(cards))
+                jobs = _parse_rss(resp.text)
+                new = 0
+                for job in jobs:
+                    key = (job["title"].lower(), (job["company"] or "").lower())
+                    if key not in seen:
+                        seen.add(key)
+                        results.append(job)
+                        new += 1
+                logger.info("Indeed '%s': %d listing(s) found, %d new", keyword, len(jobs), new)
             except Exception as exc:
                 logger.warning("Indeed fetch failed for keyword '%s': %s", keyword, exc)
 
         return results
 
 
-def _parse_cards(html: str, BeautifulSoup) -> list[tuple[str, str]]:
-    """Extract (job_id, raw_text) tuples from an Indeed search results page.
+def _strip_html(text: str) -> str:
+    """Remove HTML tags and decode common entities."""
+    text = re.sub(r"<[^>]+>", " ", text)
+    for entity, char in [("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&#xa0;", " "), ("&nbsp;", " ")]:
+        text = text.replace(entity, char)
+    return re.sub(r"\s+", " ", text).strip()
 
-    Indeed renders job cards with data-testid="job-card" and a data-jk job key.
-    Adjust selectors if Indeed changes their markup.
-    """
-    soup = BeautifulSoup(html, "lxml")
 
-    # Primary selector: Indeed's stable data-testid attribute.
-    cards = soup.select("[data-testid='job-card']")
-
-    if not cards:
-        # Fallback: look for the job card container by class fragment.
-        cards = soup.select("[class*='jobsearch-ResultsList'] li") or soup.select(".job_seen_beacon")
-
-    if not cards:
-        logger.warning("Indeed: no job cards found — selectors may need updating.")
+def _parse_rss(xml_text: str) -> list[dict]:
+    """Parse an Indeed RSS feed into structured job dicts."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as exc:
+        logger.warning("Indeed RSS parse error: %s", exc)
         return []
 
-    results = []
-    for card in cards:
-        job_id = card.get("data-jk") or card.get("id") or ""
-        lines = [line.strip() for line in card.get_text(separator="\n").splitlines() if line.strip()]
-        if lines:
-            results.append((str(job_id), "\n".join(lines)))
-    return results
+    items = root.findall(".//item")
+    if not items:
+        logger.warning("Indeed RSS: no items found — feed may be empty or the request was blocked.")
+        return []
+
+    return [job for item in items if (job := _extract_item(item)) is not None]
+
+
+def _extract_item(item) -> dict | None:
+    """Extract a structured job dict from a single RSS <item>."""
+    raw_title = (item.findtext("title") or "").strip()
+    link = (item.findtext("link") or "").strip()
+    company = (item.findtext("source") or "").strip() or None
+    description = _strip_html(item.findtext("description") or "")
+
+    # Indeed sometimes appends location to the title: "Python Developer - Tel Aviv"
+    # Split it off if the suffix looks like a location (short, contains comma or city name).
+    title = raw_title
+    location_raw: str | None = None
+    if " - " in raw_title and not company:
+        head, tail = raw_title.rsplit(" - ", 1)
+        # Treat the tail as a location if it's short (≤4 words) or contains a comma.
+        if "," in tail or len(tail.split()) <= 4:
+            title = head.strip()
+            location_raw = tail.strip()
+            # Company might now be in the description first line — leave as None for now.
+
+    if not title:
+        return None
+
+    full_text = (title + " " + (description or "")).lower()
+    remote = bool(re.search(r"\bremote\b|מרחוק|hybrid", full_text))
+    location = None if remote else location_raw
+
+    return {
+        "title": title,
+        "company": company,
+        "location": location,
+        "remote": remote,
+        "summary": description[:500] if description else None,
+        "skills": [],
+        "contact": link or None,
+    }
 
 
 if __name__ == "__main__":
@@ -114,5 +131,6 @@ if __name__ == "__main__":
     print(f"Found {len(jobs)} job(s):\n")
     for i, job in enumerate(jobs[:3], 1):
         print(f"--- Job {i} ---")
-        print(job[:400])
+        for k, v in job.items():
+            print(f"  {k}: {v!r}")
         print()

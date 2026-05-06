@@ -1,8 +1,8 @@
 """Base class for job board scrapers.
 
-Each scraper is responsible for fetching job listings from one source and
-returning them as a list of raw text strings. The pipeline's LLM handles
-extraction into structured JobPost dicts — scrapers never do that themselves.
+Each scraper fetches job listings from one source and extracts structured data
+directly from the page — no LLM required. The pipeline tools (dedup, filter,
+store) are applied by the listener after fetch() returns.
 
 A scraper receives the user's role keywords from agent/prefs.json so it can
 construct relevant search queries without duplicating config.
@@ -20,14 +20,23 @@ class JobScraper(ABC):
     name: str
 
     @abstractmethod
-    def fetch(self, keywords: list[str]) -> list[str]:
+    def fetch(self, keywords: list[str]) -> list[dict]:
         """Fetch job listings matching the given keywords.
 
         Args:
             keywords: role keywords from agent/prefs.json (e.g. ["python", "backend"]).
 
         Returns:
-            A list of raw text strings, one per job listing. The text should
-            include as much of the job post as possible (title, company,
-            location, description, contact). The LLM will extract structure.
+            A list of job dicts with the following keys:
+                title:    str            — job title
+                company:  str | None     — company name
+                location: str | None     — city / region (None if remote)
+                remote:   bool           — True if the role is remote
+                summary:  str | None     — job description / body text
+                skills:   list[str]      — extracted skill keywords (may be empty)
+                contact:  str | None     — application link or contact info
+
+            Deduplication within a single call (across keywords) is handled by
+            the scraper using a (title, company) key. Cross-poll deduplication
+            is handled by the listener using dedup_tool.is_duplicate().
         """
