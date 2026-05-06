@@ -177,6 +177,8 @@ def poll() -> None:
             jobs = scraper.fetch(keywords)
             stored = sum(1 for job in jobs if _process_job(job, scraper.name) == "stored")
             logger.info("%s: %d new job(s) stored this poll.", scraper.name, stored)
+        except (KeyboardInterrupt, SystemExit):
+            raise  # let shutdown propagate cleanly to the top-level handler
         except Exception as exc:
             logger.warning("%s scraper failed: %s", scraper.name, exc)
 
@@ -188,7 +190,10 @@ def poll() -> None:
 def run() -> None:
     """Start the blocking scheduler. Runs poll() immediately then every N minutes."""
     logger.info("Web source listener started — polling every %d minute(s)", INTERVAL_MINUTES)
-    poll()
+    try:
+        poll()
+    except (KeyboardInterrupt, SystemExit):
+        return
 
     scheduler = BlockingScheduler()
     scheduler.add_job(poll, "interval", minutes=INTERVAL_MINUTES)
@@ -199,4 +204,7 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    run()
+    try:
+        run()
+    except (KeyboardInterrupt, SystemExit):
+        pass
