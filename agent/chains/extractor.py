@@ -48,7 +48,7 @@ Rules:
     a different field is a more obvious fit. If there are multiple URLs, prefer the one that
     looks like an application or job link."""
 
-_MODEL = os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
+_MODEL = os.getenv("LLM_MODEL") or "claude-haiku-4-5-20251001"
 
 # Module-level client — replaced in tests via patch("agent.chains.extractor._client").
 _client: anthropic.AsyncAnthropic | None = None

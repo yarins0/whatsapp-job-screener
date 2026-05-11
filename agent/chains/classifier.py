@@ -33,7 +33,7 @@ Respond with JSON only, matching exactly:
 {"is_job_post": <true|false>, "confidence": <float 0..1>}
 Do not include any other text."""
 
-_MODEL = os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
+_MODEL = os.getenv("LLM_MODEL") or "claude-haiku-4-5-20251001"
 
 # Module-level client — replaced in tests via patch("agent.chains.classifier._client").
 _client: anthropic.AsyncAnthropic | None = None

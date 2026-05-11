@@ -54,7 +54,7 @@ Rules:
 
 When is_job_post is false, set jobs to []."""
 
-_MODEL = os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
+_MODEL = os.getenv("LLM_MODEL") or "claude-haiku-4-5-20251001"
 
 # Module-level client — replaced in tests via patch("agent.chains.combined._client").
 _client: anthropic.AsyncAnthropic | None = None
