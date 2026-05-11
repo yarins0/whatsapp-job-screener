@@ -1,80 +1,47 @@
 # Job Screening Agent
 
-A LangChain-powered agent that monitors multiple job sources — WhatsApp groups,
-Telegram channels, and job boards — identifies job postings, extracts structured data,
-filters by your preferences, and delivers instant Telegram alerts and a daily digest.
-
-Built as a hands-on LangChain learning project — every major LangChain primitive is used somewhere.
+Monitors WhatsApp groups, Telegram channels, and job boards for job postings.
+Extracts structured data, filters by your preferences, and delivers instant
+Telegram alerts and a daily digest.
 
 ---
+
 ## Getting started
 
-See **[docs/SETUP.md](docs/SETUP.md)** for the full setup guide — prerequisites, environment variables, WhatsApp auth, Telegram configuration, LLM provider selection, and LangSmith observability.
-
----
-
-## Learning goals (LangChain concepts covered)
-
-| Concept | Where it's used |
-|---|---|
-| `ChatPromptTemplate` | Formatting system + human turns sent to the LLM |
-| LCEL pipe operator (`\|`) | `prompt \| llm \| parser` chains in classifier and extractor |
-| `JsonOutputParser` + Pydantic | Parsing LLM JSON output into typed dicts |
-| `BaseLanguageModel` injection | Swapping real LLM for `FakeListChatModel` in tests |
-| `AgentExecutor` / Tools | Filter, dedup, store tools called in pipeline |
-| `WebBaseLoader` | Loading job board pages in the web scraper sources |
-| LangSmith tracing | Observability — every chain call is visible at smith.langchain.com |
-| LangGraph `StateGraph` | Pipeline as a directed graph of nodes with conditional edges (`agent/graph.py`) |
+See **[docs/SETUP.md](docs/SETUP.md)** for the full setup guide — prerequisites,
+environment variables, WhatsApp auth, Telegram configuration, and LangSmith observability.
 
 ---
 
 ## Architecture
 
 ```
-WhatsApp Groups
-      │
-      ▼
-┌─────────────────────┐
-│  Listener Layer     │  whatsapp-web.js (Node.js)
-│  (listener.js)      │  Connects via QR, watches named groups
-│                     │  Replays up to 48 h of missed messages on reconnect
-│                     │  Heartbeat detects silent disconnects after PC sleep
-└────────┬────────────┘
-         │ HTTP POST (raw message JSON)
-         ▼
-┌─────────────────────┐
-│  FastAPI Ingest     │  POST /ingest  →  run_pipeline()
-│  (api/main.py)      │  GET  /healthz
-└────────┬────────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────────┐
-│              LangChain Pipeline                  │
-│              (agent/pipeline.py)                 │
-│                                                  │
-│  Adaptive mode (per group, auto-selected):       │
-│  • separate  — classify then extract (2 calls)   │
-│  • combined  — classify+extract in 1 call        │
-│    (auto-switches when group ≥70% job posts)     │
-│                                                  │
-│  Per extracted job (supports multi-job messages):│
-│  3. Dedup tool  →  hash check (SQLite)           │
-│  4. Filter tool →  match agent/prefs.json        │
-│  5. Store tool  →  insert into jobs.db           │
-│  6. Notify      →  instant Telegram alert        │
-│                    + Block role / Block city      │
-│                      inline buttons              │
-└────────┬────────────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────┐     ┌──────────────────────┐
-│  Digest Scheduler   │     │  Telegram Bot         │
-│  (digest/digest.py) │     │  (telegram_bot.py)    │
-│  APScheduler cron   │     │  Long-polls updates;  │
-│  Daily summary via  │     │  handles button       │
-│  Telegram or stdout │     │  callbacks + commands │
-└─────────────────────┘     └──────────────────────┘
+WhatsApp Groups  ──┐
+Telegram Channels ─┤──► POST /ingest (FastAPI) ──► Pipeline ──► SQLite ──► Telegram (instant alert)
+Web Scrapers ──────┘         (api/main.py)          (graph.py)       ↓
+                                                                 Daily digest
+                                                               (APScheduler)
 ```
+
+### Pipeline (`agent/graph.py`)
+
+LangGraph `StateGraph` with adaptive mode selection per group:
+
+| Mode | When | LLM calls |
+|---|---|---|
+| `separate` | Default (new groups) | 2 — classify, then extract |
+| `combined` | Group ≥ 70% job posts | 1 — classify + extract together |
+
+Per extracted job: **dedup → filter → store → notify**
+
+### LLM chains (`agent/chains/`)
+
+Direct Anthropic SDK (`anthropic.AsyncAnthropic`) with `messages.parse()` and
+Pydantic-enforced structured outputs — no prompt format instructions, no JSON
+parse failures. Model defaults to `claude-haiku-4-5` (overridable via `LLM_MODEL`).
+
+Prompt caching is configurable via `PROMPT_CACHE_TTL` in `.env`.
+See **[docs/PROMPT_CACHING.md](docs/PROMPT_CACHING.md)** for options and break-even math.
 
 ---
 
@@ -84,30 +51,33 @@ WhatsApp Groups
 |---|---|
 | WhatsApp source | Node.js + `whatsapp-web.js` — QR auth, catch-up replay, heartbeat |
 | Telegram source | Python + Telethon userbot — watches channels, catch-up replay |
-| Web scraper source | Python + `langchain-community` `WebBaseLoader` + BeautifulSoup |
-| API / ingest | Python + FastAPI |
-| LLM framework | LangChain (Python) |
-| LLM model | Configurable via `LLM_PROVIDER` + `LLM_MODEL` (default: Claude Haiku) |
+| Web scraper source | Python + BeautifulSoup — structured HTML extraction, no LLM |
+| API / ingest | Python + FastAPI + in-memory retry queue (3 attempts, backoff) |
+| LLM calls | Anthropic SDK — `messages.parse()` with Pydantic structured outputs |
+| Pipeline orchestration | LangGraph `StateGraph` |
+| LLM model | `claude-haiku-4-5` (default) — override via `LLM_PROVIDER` + `LLM_MODEL` |
 | Database | SQLite — `jobs`, `seen_hashes`, `group_stats` |
 | Vector search | ChromaDB — `all-MiniLM-L6-v2` embeddings, persisted to `db/chroma/` |
 | Scheduler | APScheduler — daily digest + web scraper polling |
-| Telegram bot | `python-telegram-bot`-style long-polling — commands + inline buttons |
-| Observability | LangSmith (free tier) |
+| Telegram bot | Long-polling — commands + inline buttons |
+| Observability | LangSmith (optional) |
 
 ---
 
 ## Tests
 
-**Python (118 tests)** — run offline, no API key needed. The LLM is replaced with `FakeListChatModel` / `FakeListLLM` using scripted JSON responses; Chroma is tested with a `_FakeEmbeddingFunction` that returns deterministic vectors.
+**Python (122 tests)** — all run offline, no API key needed. Chain functions are
+mocked at the `AsyncMock` level; the rest of the pipeline (LangGraph, tools, storage)
+runs against a temp SQLite DB. ChromaDB is tested with a `_FakeEmbeddingFunction`.
 
 ```bash
 pytest tests/ -v                                              # all tests
-pytest tests/test_pipeline.py -v                             # single file
+pytest tests/test_pipeline.py -v                             # pipeline only
 pytest tests/test_pipeline.py::test_stores_a_qualified_job   # single test
 python -m agent.pipeline                                      # live smoke test (needs API key)
 ```
 
-**Node.js (7 tests)** — Jest tests for `listener/last_seen.js`, the per-group timestamp module used by the catch-up mechanism. Each test uses a unique tmp file path so tests never touch the real state file.
+**Node.js (14 tests)** — Jest tests for `sources/whatsapp/last_seen.js`.
 
 ```bash
 npm test
@@ -119,67 +89,59 @@ npm test
 
 ```
 agent/
-  pipeline.py        Entry point — run_pipeline() delegates to agent/graph.py
-  graph.py           LangGraph StateGraph — nodes, edges, and routing logic
-  prefs.json         User preferences (roles, blocklist, location_blocklist) — edit directly or via bot
-  groups.json        Watched WhatsApp group IDs and display names — edit directly or via bot
-  memory.py          UserPreferences TypedDict (type definition only)
+  pipeline.py        Entry point — run_pipeline() → LangGraph
+  graph.py           LangGraph StateGraph — nodes, edges, routing, Telegram notify
+  prefs.json         User preferences (roles, blocklist, location_blocklist)
   chains/
-    classifier.py    LCEL chain: is_job_post + confidence (separate mode)
-    extractor.py     LCEL chain: list of JobPost dicts (separate mode)
-    combined.py      LCEL chain: classify+extract in one call (combined mode)
-  list_jobs.py       CLI: python -m agent.list_jobs [--days N] [--role KW] [--unseen] [--limit N]
+    classifier.py    classify_message() — is_job_post + confidence
+    extractor.py     extract_job()      — list of JobPost dicts
+    combined.py      classify_and_extract() — single-call mode
+    cache_config.py  PROMPT_CACHE_TTL toggle (off / 5m / 1h)
+  list_jobs.py       CLI: python -m agent.list_jobs [--days N] [--role KW] [--unseen]
   tools/
-    filter_tool.py   Match job against prefs.json
-    dedup_tool.py              Hash-based dedup; is_duplicate() (structured) + is_raw_duplicate() (pre-LLM)
-    store_tool.py              Insert job into jobs table
-    stats_tool.py              Per-group job-post rate tracking; drives adaptive mode
-    prefs_tool.py              load_prefs(), add_to_blocklist(), add_to_location_blocklist(), add_to_roles()
-    groups_tool.py             load_groups(), add_group(), remove_group()
-    telegram_sources_tool.py   load_sources(), add_source(), remove_source() for telegram_sources.json
-    query_tool.py              query_jobs() + format_jobs_telegram(); shared by CLI, /jobs, and /ask
-    ask_tool.py                ask_jobs(); LLM extracts query params from natural language → query_jobs()
-  vector_store.py    index_job() + find_similar() + reindex_all(); ChromaDB wrapper for semantic search
+    filter_tool.py          Match job against prefs.json
+    dedup_tool.py           Hash-based dedup (structured + raw)
+    store_tool.py           Insert job into jobs table + ChromaDB
+    stats_tool.py           Per-group job-post rate; drives adaptive mode
+    prefs_tool.py           load/mutate prefs.json
+    groups_tool.py          load/mutate whatsapp_sources.json
+    telegram_sources_tool.py load/mutate telegram_sources.json
+    query_tool.py           query_jobs() + format_jobs_telegram()
+    ask_tool.py             Natural-language query → query_jobs()
+  vector_store.py    index_job() + find_similar() + reindex_all()
 
 api/
-  main.py            FastAPI: POST /ingest, GET /healthz
+  main.py            FastAPI: POST /ingest, GET /healthz, retry queue
 
 sources/
   whatsapp/
-    listener.js      whatsapp-web.js client; QR auth, heartbeat, catch-up replay;
-                     writes all_whatsapp_groups.json on every connect for /listgroups
-    list_groups.js   Standalone discovery tool — lists all groups + IDs, then exits
-                     (reuses saved session; no QR needed after first auth)
-    last_seen.js     Per-group timestamp persistence (path-injectable for tests)
+    listener.js      whatsapp-web.js client — QR auth, heartbeat, catch-up replay
+    last_seen.js     Per-group timestamp state (path-injectable for tests)
   telegram/
-    listener.py      Telethon userbot; watches channels in telegram_sources.json; catch-up replay
-                     Requires one-time interactive auth (see Step 6 in setup guide)
+    listener.py      Telethon userbot — watches channels, catch-up replay
   web/
-    listener.py      APScheduler-based poller; calls is_raw_duplicate() before forwarding to ingest
+    listener.py      APScheduler poller
     scrapers/
-      alljobs.py     AllJobs.co.il scraper (currently disabled — enable in agent/web_sources.json)
+      alljobs.py     AllJobs.co.il (disabled by default in web_sources.json)
+      indeed.py      Indeed Israel RSS (disabled — 403)
 
 digest/
-  digest.py          APScheduler cron + format_digest() (pure, testable)
+  digest.py          Daily digest — format + send via Telegram
 
-telegram_bot.py      Long-polls Telegram; handles feedback buttons + commands:
-                     /help /commands /prefs
-                     /blockrole /blockcity /addrole
-                     /listgroups      — ALL WhatsApp groups + IDs (owner only)
-                     /groups /addgroup /removegroup
-                     /tgsources /addtgsource /removetgsource
-                     /jobs [keyword] [unseen]
-                     /ask <question>  — natural-language search; demo limited to 3/session
-                     /similar <text>  — semantic similarity search via ChromaDB
-                     /reindex         — back-fill ChromaDB from SQLite history (owner only)
+telegram_bot.py      Commands: /help /prefs /blockrole /blockcity /addrole
+                               /groups /addgroup /removegroup
+                               /tgsources /addtgsource /removetgsource
+                               /jobs /ask /similar /reindex /listgroups
 
 db/
   schema.sql         SQLite schema (jobs, seen_hashes, group_stats)
   init_db.py         python -m db.init_db
 
-tests/
-  conftest.py        temp_db (+ auto-isolates CHROMA_DB_PATH), temp_chroma, temp_prefs, temp_groups, telegram_owner, sample_messages
-  sample_messages.json
+docs/
+  SETUP.md           Full setup guide
+  PROMPT_CACHING.md  Caching options + break-even math
+
+tests/               122 Python tests (offline)
 ```
 
 ---

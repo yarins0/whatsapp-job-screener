@@ -27,7 +27,7 @@ from typing import Optional
 
 # Night window: caching is off between these hours (24h format, local time).
 _NIGHT_START_HOUR = 22   # 10 pm
-_NIGHT_END_HOUR   = 7    # 7 am
+_NIGHT_END_HOUR   = 8    # 9 am
 
 # Idle duration (minutes) that triggers a burst-mode activation.
 # After being quiet for this long, the next incoming message is likely the
