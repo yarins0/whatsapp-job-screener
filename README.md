@@ -4,6 +4,8 @@ Monitors WhatsApp groups, Telegram channels, and job boards for job postings.
 Extracts structured data, filters by your preferences, and delivers instant
 Telegram alerts and a daily digest.
 
+**Live demo (when agent is running):** [@myjobscreener_bot](https://t.me/myjobscreener_bot) — try `/ask python jobs this week` or `/jobs`
+
 ---
 
 ## Getting started
