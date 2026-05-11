@@ -192,7 +192,8 @@ def _handle_message(msg: dict) -> None:
                 "/jobs <keyword> unseen — keyword + unseen only\n"
                 "/ask <question> — natural-language search (e.g. remote Python jobs this week)\n"
                 "/similar <text> — find semantically similar jobs (e.g. Python backend FastAPI)\n"
-                "/reindex — re-index all stored jobs in the vector store\n\n"
+                "/reindex — re-index all stored jobs in the vector store\n"
+                "/resend [N] — re-send notifications for jobs stored in last N hours (default 2)\n\n"
                 "Preferences:\n"
                 "/prefs — show current roles, blocklist, and blocked cities\n"
                 "/blockrole <keyword> — add a keyword to the role blocklist\n"
@@ -322,6 +323,41 @@ def _handle_message(msg: dict) -> None:
         except Exception as exc:
             logger.warning("reindex_all failed: %s", exc)
             _send(chat_id, f"Re-index failed: {exc}")
+
+    elif text.startswith("/resend"):
+        if not _is_owner(chat_id):
+            _send(chat_id, _READONLY_DENIED)
+            return
+
+        from agent.graph import _notify_job
+        from agent.tools.query_tool import query_jobs_recent
+
+        arg = text[len("/resend"):].strip()
+        try:
+            hours = int(arg) if arg else 2
+            if hours < 1:
+                raise ValueError
+        except ValueError:
+            _send(chat_id, "Usage: /resend [hours]\nExample: /resend 2")
+            return
+
+        try:
+            jobs = query_jobs_recent(hours)
+        except Exception as exc:
+            _send(chat_id, f"Could not query jobs: {exc}")
+            return
+
+        h_label = f"{hours} hour{'s' if hours != 1 else ''}"
+        if not jobs:
+            _send(chat_id, f"No jobs stored in the last {h_label}.")
+            return
+
+        _send(chat_id, f"Resending {len(jobs)} job{'s' if len(jobs) != 1 else ''} from the last {h_label}…")
+        for job in jobs:
+            try:
+                _notify_job(job, job["id"])
+            except Exception as exc:
+                logger.warning("resend notification failed for job %s: %s", job.get("id"), exc)
 
     elif text.startswith("/prefs"):
         try:

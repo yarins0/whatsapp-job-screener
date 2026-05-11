@@ -77,6 +77,29 @@ def query_jobs(
         conn.close()
 
 
+def query_jobs_recent(hours: int) -> list[dict]:
+    """Return jobs stored within the last N hours, newest first. No row limit."""
+    db = _db_path()
+    if not db.exists():
+        return []
+
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    sql = """
+        SELECT id, title, company, location, remote, skills,
+               salary, contact, summary, group_name, timestamp, seen, created_at
+        FROM jobs
+        WHERE created_at >= ?
+        ORDER BY created_at DESC
+    """
+    conn = sqlite3.connect(db)
+    try:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(sql, [cutoff.strftime("%Y-%m-%d %H:%M:%S")]).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def format_jobs_telegram(
     jobs: list[dict],
     *,
