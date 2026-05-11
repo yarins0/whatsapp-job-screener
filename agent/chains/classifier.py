@@ -1,28 +1,19 @@
-"""Classifier chain — decides whether a WhatsApp message is a job posting.
-
-LangChain concepts demonstrated:
-  * ChatPromptTemplate (system + human turns)
-  * Pydantic schema for typed output
-  * JsonOutputParser
-  * LCEL pipe operator: prompt | llm | parser
-"""
+"""Classifier — decides whether a WhatsApp message is a job posting."""
 
 from __future__ import annotations
 
-from langchain_core.language_models import BaseLanguageModel
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import Runnable
+import os
+from typing import Optional
+
+import anthropic
 from pydantic import BaseModel, Field
+
+from agent.chains.cache_config import get_cache_control
 
 
 class ClassificationResult(BaseModel):
-    """Output schema for the classifier."""
-
     is_job_post: bool = Field(description="True iff the message is a job posting.")
-    confidence: float = Field(
-        description="Model confidence between 0.0 and 1.0.", ge=0.0, le=1.0
-    )
+    confidence: float = Field(ge=0.0, le=1.0, description="Model confidence between 0.0 and 1.0.")
 
 
 _SYSTEM_PROMPT = """You are a classifier that detects job postings in WhatsApp group messages.
@@ -39,23 +30,37 @@ It is NOT a job post if it is:
   - a recruiter announcing they are open to chat without a specific role
 
 Respond with JSON only, matching exactly:
-{{"is_job_post": <true|false>, "confidence": <float 0..1>}}
+{"is_job_post": <true|false>, "confidence": <float 0..1>}
 Do not include any other text."""
 
+_MODEL = os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
 
-def build_classifier_chain(llm: BaseLanguageModel) -> Runnable:
-    """Build the classifier LCEL chain.
+# Module-level client — replaced in tests via patch("agent.chains.classifier._client").
+_client: anthropic.AsyncAnthropic | None = None
 
-    Args:
-        llm: any LangChain chat model (ChatAnthropic in production,
-             FakeListChatModel in tests).
 
-    Returns:
-        A Runnable taking ``{"message": str}`` and returning a dict
-        with keys ``is_job_post`` (bool) and ``confidence`` (float).
+def _get_client() -> anthropic.AsyncAnthropic:
+    global _client
+    if _client is None:
+        _client = anthropic.AsyncAnthropic()
+    return _client
+
+
+async def classify_message(message: str) -> dict:
+    """Classify whether a message is a job posting.
+
+    Returns a dict with keys ``is_job_post`` (bool) and ``confidence`` (float).
     """
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", _SYSTEM_PROMPT), ("human", "Message:\n{message}")]
+    system_block: dict = {"type": "text", "text": _SYSTEM_PROMPT}
+    cache_control = get_cache_control()
+    if cache_control is not None:
+        system_block["cache_control"] = cache_control
+
+    response = await _get_client().messages.parse(
+        model=_MODEL,
+        max_tokens=256,
+        system=[system_block],
+        messages=[{"role": "user", "content": f"Message:\n{message}"}],
+        output_format=ClassificationResult,
     )
-    parser = JsonOutputParser(pydantic_object=ClassificationResult)
-    return prompt | llm | parser
+    return response.parsed_output.model_dump()

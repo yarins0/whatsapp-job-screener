@@ -1,27 +1,17 @@
-"""Combined classify+extract chain.
-
-Used by the adaptive pipeline for high-density job groups (>=70% job posts).
-Merges the classifier and extractor into a single LLM call that returns both
-the classification decision AND the extracted job list in one JSON response.
-
-When is_job_post is false the jobs list will be empty and the pipeline skips
-the dedup/filter/store steps without a second LLM call.
-"""
+"""Combined classify+extract chain — one API call for high-density job groups."""
 
 from __future__ import annotations
 
+import os
 from typing import List, Optional
 
-from langchain_core.language_models import BaseLanguageModel
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import Runnable
+import anthropic
 from pydantic import BaseModel, Field
+
+from agent.chains.cache_config import get_cache_control
 
 
 class JobFields(BaseModel):
-    """Extracted fields for a single job within a combined response."""
-
     title: str = Field(description="The role / job title. Required.")
     company: Optional[str] = Field(default=None)
     location: Optional[str] = Field(default=None)
@@ -33,8 +23,6 @@ class JobFields(BaseModel):
 
 
 class CombinedResult(BaseModel):
-    """Output schema for the combined classify+extract chain."""
-
     is_job_post: bool = Field(description="True iff the message contains at least one job posting.")
     confidence: float = Field(ge=0.0, le=1.0)
     jobs: List[JobFields] = Field(
@@ -64,24 +52,42 @@ Rules:
     a different field is a more obvious fit. If there are multiple URLs, prefer the one that
     looks like an application or job link.
 
-Respond with JSON only:
-{{"is_job_post": <true|false>, "confidence": <float 0..1>, "jobs": [<job>, ...]}}
-When is_job_post is false, set jobs to [].
-Do not include any other text."""
+When is_job_post is false, set jobs to []."""
+
+_MODEL = os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
+
+# Module-level client — replaced in tests via patch("agent.chains.combined._client").
+_client: anthropic.AsyncAnthropic | None = None
 
 
-def build_combined_chain(llm: BaseLanguageModel) -> Runnable:
-    """Build the combined classify+extract LCEL chain.
+def _get_client() -> anthropic.AsyncAnthropic:
+    global _client
+    if _client is None:
+        _client = anthropic.AsyncAnthropic()
+    return _client
 
-    Args:
-        llm: any LangChain chat model.
 
-    Returns:
-        A Runnable taking ``{"message": str}`` and returning a dict with keys
-        ``is_job_post`` (bool), ``confidence`` (float), and ``jobs`` (list of dicts).
+async def classify_and_extract(message: str) -> dict:
+    """Classify and extract jobs in a single API call.
+
+    Returns a dict with keys ``is_job_post`` (bool), ``confidence`` (float),
+    and ``jobs`` (list of job dicts).
     """
-    prompt = ChatPromptTemplate.from_messages(
-        [("system", _SYSTEM_PROMPT), ("human", "Message:\n{message}")]
+    system_block: dict = {"type": "text", "text": _SYSTEM_PROMPT}
+    cache_control = get_cache_control()
+    if cache_control is not None:
+        system_block["cache_control"] = cache_control
+
+    response = await _get_client().messages.parse(
+        model=_MODEL,
+        max_tokens=1024,
+        system=[system_block],
+        messages=[{"role": "user", "content": f"Message:\n{message}"}],
+        output_format=CombinedResult,
     )
-    parser = JsonOutputParser(pydantic_object=CombinedResult)
-    return prompt | llm | parser
+    result = response.parsed_output
+    return {
+        "is_job_post": result.is_job_post,
+        "confidence": result.confidence,
+        "jobs": [j.model_dump() for j in result.jobs],
+    }

@@ -43,9 +43,12 @@ No explanation, no markdown — only the JSON object."""
 
 
 def _default_llm() -> BaseLanguageModel:
-    # Lazy import keeps tests offline; mirrors the pattern in agent/pipeline.py.
-    from agent.pipeline import _default_llm as pipeline_default_llm
-    return pipeline_default_llm()
+    import os
+    from langchain_anthropic import ChatAnthropic
+    return ChatAnthropic(
+        model=os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001"),
+        temperature=0,
+    )
 
 
 def ask_jobs(question: str, *, llm: Optional[BaseLanguageModel] = None) -> str:

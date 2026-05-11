@@ -1,25 +1,17 @@
-"""Extractor chain — pulls structured fields out of a job posting message.
-
-LangChain concepts demonstrated:
-  * Pydantic schema with optional/list types
-  * JsonOutputParser pulling format instructions into the prompt
-  * Few-shot guidance via the system message
-"""
+"""Extractor — pulls structured job fields from a message."""
 
 from __future__ import annotations
 
+import os
 from typing import List, Optional
 
-from langchain_core.language_models import BaseLanguageModel
-from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import Runnable
+import anthropic
 from pydantic import BaseModel, Field
+
+from agent.chains.cache_config import get_cache_control
 
 
 class JobPost(BaseModel):
-    """Structured representation of a single job posting."""
-
     title: str = Field(description="The role / job title. Required.")
     company: Optional[str] = Field(default=None, description="Hiring company name.")
     location: Optional[str] = Field(default=None, description="City, region, or country.")
@@ -31,16 +23,19 @@ class JobPost(BaseModel):
         default_factory=list, description="Concrete technologies, languages, or skills."
     )
     salary: Optional[str] = Field(default=None, description="Salary or range as written.")
-    contact: Optional[str] = Field(
-        default=None, description="Email, phone, link, or instructions to apply."
-    )
+    contact: Optional[str] = Field(default=None, description="Email, phone, link, or instructions to apply.")
     summary: str = Field(description="A one-sentence summary the digest can quote.")
+
+
+class ExtractionResult(BaseModel):
+    jobs: List[JobPost] = Field(description="All job postings found in the message.")
 
 
 _SYSTEM_PROMPT = """You extract structured job-posting data from WhatsApp messages.
 
 Rules:
-  * Return a single JSON object that matches the schema. No prose, no Markdown.
+  * Return a JSON object with a "jobs" array. Each element matches the job schema.
+    If the message contains a single job, the array has one element.
   * If a field is not mentioned, use null (or [] for skills).
   * "remote" is true only if the post explicitly says remote/hybrid-remote/work-from-home.
     Use false if it explicitly says on-site/in-office. Otherwise null.
@@ -50,21 +45,37 @@ Rules:
   * Preserve the original language of the post when sensible (e.g. Hebrew titles).
   * "contact" must include any URL (http:// or https://) present in the message — even if it
     is not explicitly labelled as a contact link. A URL is always the contact field unless
-    a different field (e.g. location, company website) is a more obvious fit.
-    If there are multiple URLs, prefer the one that looks like an application or job link."""
+    a different field is a more obvious fit. If there are multiple URLs, prefer the one that
+    looks like an application or job link."""
+
+_MODEL = os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001")
+
+# Module-level client — replaced in tests via patch("agent.chains.extractor._client").
+_client: anthropic.AsyncAnthropic | None = None
 
 
-def build_extractor_chain(llm: BaseLanguageModel) -> Runnable:
-    """Build the extractor LCEL chain.
+def _get_client() -> anthropic.AsyncAnthropic:
+    global _client
+    if _client is None:
+        _client = anthropic.AsyncAnthropic()
+    return _client
 
-    Returns a Runnable that takes ``{"message": str}`` and returns a dict
-    matching :class:`JobPost`.
+
+async def extract_job(message: str) -> list[dict]:
+    """Extract structured job fields from a message.
+
+    Returns a list of job dicts, one per job posting found in the message.
     """
-    parser = JsonOutputParser(pydantic_object=JobPost)
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", _SYSTEM_PROMPT + "\n\n{format_instructions}"),
-            ("human", "Message:\n{message}"),
-        ]
-    ).partial(format_instructions=parser.get_format_instructions())
-    return prompt | llm | parser
+    system_block: dict = {"type": "text", "text": _SYSTEM_PROMPT}
+    cache_control = get_cache_control()
+    if cache_control is not None:
+        system_block["cache_control"] = cache_control
+
+    response = await _get_client().messages.parse(
+        model=_MODEL,
+        max_tokens=1024,
+        system=[system_block],
+        messages=[{"role": "user", "content": f"Message:\n{message}"}],
+        output_format=ExtractionResult,
+    )
+    return [job.model_dump() for job in response.parsed_output.jobs]

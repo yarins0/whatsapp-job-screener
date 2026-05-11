@@ -27,15 +27,13 @@ Graph topology:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from langchain_core.language_models import BaseLanguageModel
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
-from agent.chains.classifier import build_classifier_chain
-from agent.chains.combined import build_combined_chain
-from agent.chains.extractor import build_extractor_chain
+from agent.chains.classifier import classify_message
+from agent.chains.combined import classify_and_extract
+from agent.chains.extractor import extract_job
 from agent.tools.dedup_tool import is_duplicate
 from agent.tools.filter_tool import filter_job
 from agent.tools.stats_tool import get_pipeline_mode, record_message
@@ -59,16 +57,15 @@ class PipelineState(TypedDict, total=False):
     """
 
     # Inputs — populated by run_pipeline before invoking the graph.
-    message: dict           # raw inbound message: text, group, sender, timestamp
-    llm: Any                # LangChain chat model (ChatAnthropic in prod, Fake in tests)
-    notify: bool            # whether to fire Telegram notifications
+    message: dict   # raw inbound message: text, group, sender, timestamp
+    notify: bool    # whether to fire Telegram notifications
 
     # Written by the route node.
     is_job: bool
     confidence: float
-    jobs: list              # extracted job dicts (from route for combined/web-scraper,
-                            # or from the extract node for separate mode)
-    mode: str               # "web-scraper" | "combined" | "separate"
+    jobs: list      # extracted job dicts (from route for combined/web-scraper,
+                    # or from the extract node for separate mode)
+    mode: str       # "web-scraper" | "combined" | "separate"
 
     # Written by the process_jobs node.
     stored_jobs: list
@@ -81,15 +78,6 @@ class PipelineState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _normalise_jobs(raw: Any) -> list:
-    """Ensure extractor output is always a list.
-
-    The LLM may return a single dict (one job) or a list (multiple jobs in one
-    message). Normalising here means every downstream node can assume a list.
-    """
-    return raw if isinstance(raw, list) else [raw]
-
 
 def _make_route_result(
     is_job: bool,
@@ -114,39 +102,34 @@ def _make_route_result(
 async def route(state: PipelineState) -> dict:
     """Classify the message and extract jobs for all non-separate paths.
 
-    Three sub-paths mirror the original pipeline.py logic:
+    Three sub-paths:
       web-scraper  — skip classification; go straight to extraction.
-      combined     — classify + extract in one LLM call.
+      combined     — classify + extract in one API call.
       separate     — classify only; extraction is a separate node.
     Records per-group stats in all cases.
     """
     message: dict = state["message"]
-    llm: BaseLanguageModel = state["llm"]
     text: str = message.get("text", "")
     group: str = message.get("group") or ""
     sender: str = message.get("sender") or ""
 
     if sender == "web-scraper":
-        # Web-scraped listings are guaranteed job posts — skip the classifier.
-        raw = await build_extractor_chain(llm).ainvoke({"message": text})
-        return _make_route_result(True, 1.0, _normalise_jobs(raw), "web-scraper", group)
+        jobs = await extract_job(text)
+        return _make_route_result(True, 1.0, jobs, "web-scraper", group)
 
     mode = get_pipeline_mode(group)
 
     if mode == "combined":
         try:
-            combined = await build_combined_chain(llm).ainvoke({"message": text})
+            combined = await classify_and_extract(text)
             is_job: bool = combined.get("is_job_post", False)
             confidence: float = float(combined.get("confidence", 0.0))
             return _make_route_result(is_job, confidence, combined.get("jobs") or [], "combined", group)
         except Exception as exc:
-            # If the combined chain fails, fall back to separate mode so the
-            # message is not silently lost.
             logger.warning("Combined chain failed (%s) — falling back to separate mode", exc)
             mode = "separate"
 
-    # Separate mode: classify here, extract in the dedicated extract node.
-    classification = await build_classifier_chain(llm).ainvoke({"message": text})
+    classification = await classify_message(text)
     is_job = bool(classification.get("is_job_post"))
     confidence = float(classification.get("confidence", 0.0))
     return _make_route_result(is_job, confidence, [], "separate", group)
@@ -157,8 +140,8 @@ async def extract(state: PipelineState) -> dict:
 
     Only reached in separate mode after the classifier confirms this is a job post.
     """
-    raw = await build_extractor_chain(state["llm"]).ainvoke({"message": state["message"].get("text", "")})
-    return {"jobs": _normalise_jobs(raw)}
+    jobs = await extract_job(state["message"].get("text", ""))
+    return {"jobs": jobs}
 
 
 async def process_jobs(state: PipelineState) -> dict:
