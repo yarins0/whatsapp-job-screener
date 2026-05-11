@@ -1,88 +1,134 @@
 """Prompt-caching configuration for the LLM chains.
 
-Set PROMPT_CACHE_TTL in your .env to control whether system prompts are cached
-between API calls. The three chains (classifier, extractor, combined) all read
-this setting via get_cache_control().
+Controls whether system prompts are cached between Anthropic API calls.
+All three chains (classifier, extractor, combined) read this via get_cache_control().
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-HOW PROMPT CACHING WORKS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Anthropic caches the system prompt server-side. The first call that hits a cold
-cache pays a write premium; subsequent calls within the TTL window pay ~10% of
-normal input cost for those cached tokens.
+Set PROMPT_CACHE_TTL in .env:
+  off   — no caching (default)
+  5m    — 5-minute TTL  (break-even: ≥ 3 messages per 5-min window)
+  1h    — 1-hour TTL    (break-even: ≥ 12 messages per hour)
+  auto  — dynamic: caches during catch-up bursts, off at night and during sparse traffic
 
-  No cache:   every call costs   1.00×  base input price
-  Cache hit:  every call costs   0.10×  base input price  (90% savings)
-  5-min write:                   1.25×  (one-time per 5-min window)
-  1-hour write:                  2.00×  (one-time per 1-hour window)
-
-The cache TTL resets on every hit. As long as calls keep arriving before the
-window expires, the cache stays warm.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BREAK-EVEN MATH  (for claude-haiku-4-5 at $1.00 / 1M input tokens)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-System prompts across the three chains total ~530 cached tokens.
-
-Uncached cost per call:   530 × $0.000001            = $0.00053
-5-min write cost:         530 × $0.00000125           = $0.00066  (+25%)
-1-hour write cost:        530 × $0.000002             = $0.00106  (+100%)
-Cache hit cost:           530 × $0.0000001            = $0.000053 (−90%)
-
-Break-even for 5-min TTL
-  Write 1.25× + n hits at 0.10× = (n+1) calls at 1.00×
-  1.25 + 0.10n = n + 1  →  n = 2.8
-  → You need ≥ 3 messages in any 5-minute window to profit.
-  → At 1 message / 5 min you pay a 25% premium with zero benefit.
-
-Break-even for 1-hour TTL
-  Write 2.00× + n hits at 0.10× = (n+1) calls at 1.00×
-  2.00 + 0.10n = n + 1  →  n = 11.1
-  → You need ≥ 12 messages per hour to profit.
-  → At fewer messages you pay up to 2× for nothing.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WHICH OPTION TO CHOOSE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  off  — safe default. No risk of paying extra. Best for sparse traffic
-         (fewer than 3 messages per 5-min burst, or fewer than 12/hour).
-         Dollar difference at Haiku prices is fractions of a cent either way,
-         but caching does reduce latency on hits.
-
-  5m   — worth it if your groups occasionally burst 3+ jobs in a few minutes
-         (e.g. a recruiter posting several roles at once).
-
-  1h   — worth it if you consistently receive 12+ messages per hour during
-         active periods. Pays for itself quickly at higher volume.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CONFIGURATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Add one of these to your .env file:
-
-  PROMPT_CACHE_TTL=off    # no caching (default)
-  PROMPT_CACHE_TTL=5m     # 5-minute TTL
-  PROMPT_CACHE_TTL=1h     # 1-hour TTL
+See docs/PROMPT_CACHING.md for the full break-even math and auto mode details.
 """
 
 from __future__ import annotations
 
+import math
 import os
+import sqlite3
+import time
+from datetime import datetime
 from typing import Optional
 
-# Valid options and their Anthropic API representations.
+# ---------------------------------------------------------------------------
+# Auto mode tuning constants — edit here, not in .env
+# ---------------------------------------------------------------------------
+
+# Night window: caching is off between these hours (24h format, local time).
+_NIGHT_START_HOUR = 22   # 10 pm
+_NIGHT_END_HOUR   = 7    # 7 am
+
+# Idle duration (minutes) that triggers a burst-mode activation.
+# After being quiet for this long, the next incoming message is likely the
+# start of a WhatsApp catch-up replay — enable caching for the burst.
+_BURST_THRESHOLD_MINUTES = 30
+
+# How long (minutes) burst mode stays active after the last message arrived.
+# Each new message extends the window, so burst mode expires naturally once
+# traffic drops off (i.e. catch-up is complete).
+_BURST_WINDOW_MINUTES = 10
+
+# ---------------------------------------------------------------------------
+# Static TTL map
+# ---------------------------------------------------------------------------
+
 _TTL_MAP: dict[str, Optional[dict]] = {
-    "off": None,
-    "5m":  {"type": "ephemeral"},
-    "1h":  {"type": "ephemeral", "ttl": "1h"},
+    "off":  None,
+    "5m":   {"type": "ephemeral"},
+    "1h":   {"type": "ephemeral", "ttl": "1h"},
+    "auto": None,  # placeholder — handled dynamically in get_cache_control()
 }
 
+# In-memory state for auto mode: epoch time until which burst mode is active.
+_burst_mode_until: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _is_night_hours() -> bool:
+    hour = datetime.now().hour
+    if _NIGHT_START_HOUR > _NIGHT_END_HOUR:
+        # Spans midnight: e.g. 22–7
+        return hour >= _NIGHT_START_HOUR or hour < _NIGHT_END_HOUR
+    # Same-day window: e.g. 1–6
+    return _NIGHT_START_HOUR <= hour < _NIGHT_END_HOUR
+
+
+def _minutes_idle() -> float:
+    """Return minutes since the last recorded group activity.
+
+    Queries MAX(updated_at) from group_stats. Returns math.inf when the table
+    is empty or inaccessible (treats a cold start as a long idle period so the
+    first burst is always detected correctly).
+    """
+    db_path = os.getenv("JOBS_DB_PATH", "db/jobs.db")
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            row = conn.execute(
+                "SELECT MAX(updated_at) FROM group_stats"
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception:
+        return math.inf
+
+    if row is None or row[0] is None:
+        return math.inf
+
+    try:
+        last = datetime.fromisoformat(row[0])
+        return (datetime.now() - last).total_seconds() / 60
+    except (ValueError, TypeError):
+        return math.inf
+
+
+def _get_auto_cache_control() -> Optional[dict]:
+    """Decide at runtime whether caching should be active."""
+    global _burst_mode_until
+    now = time.time()
+
+    # Night: always off; also reset burst so morning starts fresh.
+    if _is_night_hours():
+        _burst_mode_until = 0.0
+        return None
+
+    # Burst window still active — extend it and keep caching.
+    if now < _burst_mode_until:
+        _burst_mode_until = now + _BURST_WINDOW_MINUTES * 60
+        return {"type": "ephemeral"}
+
+    # Check whether a burst is starting (long idle before this message).
+    if _minutes_idle() > _BURST_THRESHOLD_MINUTES:
+        _burst_mode_until = now + _BURST_WINDOW_MINUTES * 60
+        return {"type": "ephemeral"}
+
+    # Normal sparse traffic: caching not worth the write overhead.
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def get_cache_control() -> Optional[dict]:
     """Return the cache_control dict for the current PROMPT_CACHE_TTL setting.
 
-    Returns None when caching is disabled (the block is sent without a
-    cache_control key and Anthropic will not cache it).
+    Returns None when caching is disabled — the system prompt block is sent
+    without a cache_control key and Anthropic will not cache it.
     """
     raw = os.getenv("PROMPT_CACHE_TTL", "off").strip().lower()
     if raw not in _TTL_MAP:
@@ -90,4 +136,6 @@ def get_cache_control() -> Optional[dict]:
         raise ValueError(
             f"Invalid PROMPT_CACHE_TTL={raw!r}. Valid values: {valid}"
         )
+    if raw == "auto":
+        return _get_auto_cache_control()
     return _TTL_MAP[raw]
