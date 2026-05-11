@@ -59,6 +59,10 @@ Rules:
   * "skills" is a flat list of concrete technologies (e.g. "Python", "React"), not soft skills.
   * "summary" must be a single neutral sentence (<= 25 words).
   * Preserve the original language for titles and company names.
+  * "contact" must include any URL (http:// or https://) present in the message — even if it
+    is not explicitly labelled as a contact link. A URL is always the contact field unless
+    a different field is a more obvious fit. If there are multiple URLs, prefer the one that
+    looks like an application or job link.
 
 Respond with JSON only:
 {{"is_job_post": <true|false>, "confidence": <float 0..1>, "jobs": [<job>, ...]}}

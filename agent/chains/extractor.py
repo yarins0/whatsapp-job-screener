@@ -47,7 +47,11 @@ Rules:
   * "skills" is a flat list of strings; pull concrete tech (e.g. "Python", "React"),
     not soft skills.
   * "summary" must be a single neutral sentence (<= 25 words) describing the role.
-  * Preserve the original language of the post when sensible (e.g. Hebrew titles)."""
+  * Preserve the original language of the post when sensible (e.g. Hebrew titles).
+  * "contact" must include any URL (http:// or https://) present in the message — even if it
+    is not explicitly labelled as a contact link. A URL is always the contact field unless
+    a different field (e.g. location, company website) is a more obvious fit.
+    If there are multiple URLs, prefer the one that looks like an application or job link."""
 
 
 def build_extractor_chain(llm: BaseLanguageModel) -> Runnable:

@@ -118,10 +118,21 @@ async function reconnect() {
 
 async function forwardMessage(msg, groupName) {
   if (!msg.body) return; // skip media-only messages
+
+  // Append any links that whatsapp-web.js parsed but aren't already visible in the
+  // body text. This gives the LLM an unambiguous signal for the contact field when
+  // the URL is buried in a long message or formatted as a preview rather than plain text.
+  let text = msg.body;
+  const parsedLinks = (msg.links || []).map((l) => l.link).filter(Boolean);
+  const newLinks = [...new Set(parsedLinks)].filter((l) => !text.includes(l));
+  if (newLinks.length > 0) {
+    text += `\n\nLinks: ${newLinks.join(' ')}`;
+  }
+
   await axios.post(API_URL, {
     group: groupName,
     sender: msg.from,
-    text: msg.body,
+    text,
     timestamp: msg.timestamp,
   });
 }
