@@ -185,7 +185,7 @@ async def process_jobs(state: PipelineState) -> dict:
 
         # Notify — instant Telegram alert so good jobs aren't missed until the digest.
         if notify:
-            _notify_job(job, job_id)
+            _notify_job(enriched, job_id)
 
     return {"stored_jobs": stored_jobs, "skipped_jobs": skipped_jobs}
 
@@ -339,7 +339,10 @@ def _notify_job(job: dict, job_id: int) -> None:
         is_remote = bool(job.get("remote"))
         loc = "Remote" if is_remote else (job.get("location") or "Unknown")
         summary = job.get("summary") or ""
-        contact = job.get("contact") or "see original message"
+        group = job.get("group") or job.get("group_name") or ""
+        contact = job.get("contact") or (
+            f"see original message in {group}" if group else "see original message"
+        )
 
         lines = [f"New job: *{_md(title)}* @ {_md(company)} ({_md(loc)})"]
         if summary:

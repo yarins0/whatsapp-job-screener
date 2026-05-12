@@ -100,6 +100,30 @@ def query_jobs_recent(hours: int) -> list[dict]:
         conn.close()
 
 
+def _format_job_block(job: dict) -> str:
+    """Render one job as a Telegram Markdown block (used by digest and /jobs command)."""
+    loc = "Remote" if job.get("remote") else (job.get("location") or "Unknown")
+    company = job.get("company") or "Unknown company"
+    title = job.get("title") or "Untitled role"
+    summary = job.get("summary") or ""
+    group = job.get("group_name") or job.get("group") or ""
+    contact = job.get("contact") or (
+        f"see original message in {group}" if group else "see original message"
+    )
+    try:
+        skills = json.loads(job.get("skills") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        skills = []
+
+    lines = [f"*{title}* @ {company} ({loc})"]
+    if summary:
+        lines.append(f"  {summary}")
+    if skills:
+        lines.append(f"  Skills: {', '.join(skills[:6])}")
+    lines.append(f"  Contact: {contact}")
+    return "\n".join(lines)
+
+
 def format_jobs_telegram(
     jobs: list[dict],
     *,
@@ -125,26 +149,7 @@ def format_jobs_telegram(
 
     header = f"📋 *Jobs — {period}* ({len(jobs)} found{filter_suffix})"
 
-    # Build per-job blocks the same way format_digest() does.
-    blocks: list[str] = []
-    for j in jobs:
-        loc = "Remote" if j.get("remote") else (j.get("location") or "Unknown")
-        company = j.get("company") or "Unknown company"
-        title = j.get("title") or "Untitled role"
-        summary = j.get("summary") or ""
-        contact = j.get("contact") or "see original message"
-        try:
-            skills = json.loads(j.get("skills") or "[]")
-        except (json.JSONDecodeError, TypeError):
-            skills = []
-
-        lines = [f"*{title}* @ {company} ({loc})"]
-        if summary:
-            lines.append(f"  {summary}")
-        if skills:
-            lines.append(f"  Skills: {', '.join(skills[:6])}")
-        lines.append(f"  Contact: {contact}")
-        blocks.append("\n".join(lines))
+    blocks = [_format_job_block(j) for j in jobs]
 
     # Assemble, then trim from the end if over the character limit.
     included: list[str] = []

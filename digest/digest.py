@@ -11,7 +11,6 @@ Or fire a single send (e.g. from cron / on-demand) with:
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sqlite3
@@ -21,6 +20,8 @@ from typing import Iterable
 import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from dotenv import load_dotenv
+
+from agent.tools.query_tool import _format_job_block
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -74,22 +75,7 @@ def format_digest(jobs: list[dict]) -> str:
     lines.append("")
 
     for j in jobs:
-        loc = "Remote" if j.get("remote") else (j.get("location") or "Unknown")
-        company = j.get("company") or "Unknown company"
-        title = j.get("title") or "Untitled role"
-        summary = j.get("summary") or ""
-        contact = j.get("contact") or "see original message"
-        try:
-            skills = json.loads(j.get("skills") or "[]")
-        except (json.JSONDecodeError, TypeError):
-            skills = []
-
-        lines.append(f"*{title}* @ {company} ({loc})")
-        if summary:
-            lines.append(f"  {summary}")
-        if skills:
-            lines.append(f"  Skills: {', '.join(skills[:6])}")
-        lines.append(f"  Contact: {contact}")
+        lines.append(_format_job_block(j))
         lines.append("")
 
     return "\n".join(lines).rstrip()
