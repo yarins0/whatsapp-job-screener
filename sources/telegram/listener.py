@@ -26,8 +26,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 
 import requests
@@ -113,13 +115,99 @@ def _extract_preview(message) -> str | None:
     return "\n".join(parts) if parts else None
 
 
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _find_first_url(text: str) -> str | None:
+    """Return the first http/https URL found in text, or None."""
+    match = _URL_RE.search(text)
+    return match.group(0).rstrip(".,)>") if match else None
+
+
+class _OGParser(HTMLParser):
+    """Extract og:title, og:description, and <title> from an HTML snippet."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.og_title: str | None = None
+        self.og_description: str | None = None
+        self.page_title: str | None = None
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag == "title":
+            self._in_title = True
+            return
+        if tag != "meta":
+            return
+        d = dict(attrs)
+        prop = (d.get("property") or d.get("name") or "").lower()
+        content = d.get("content") or ""
+        if prop == "og:title" and not self.og_title:
+            self.og_title = content.strip()
+        elif prop == "og:description" and not self.og_description:
+            self.og_description = content.strip()
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title and not self.page_title:
+            self.page_title = data.strip()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self._in_title = False
+
+
+def _fetch_url_preview(url: str) -> str | None:
+    """Fetch OG metadata from a URL and return labeled preview lines, or None.
+
+    Falls back to the HTML <title> when og:title is absent.
+    Times out after 5 seconds so it never blocks the listener significantly.
+    Only parses the first 50 KB of the response to avoid reading large pages.
+    """
+    try:
+        resp = requests.get(
+            url,
+            timeout=5,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; JobBot/1.0)"},
+            allow_redirects=True,
+        )
+        if not resp.ok or "text/html" not in resp.headers.get("Content-Type", ""):
+            return None
+        parser = _OGParser()
+        parser.feed(resp.text[:50_000])
+        title = parser.og_title or parser.page_title
+        description = parser.og_description
+        if not title and not description:
+            return None
+        parts = []
+        if title:
+            parts.append(f"Title: {title}")
+        if description:
+            parts.append(f"Description: {description}")
+        parts.append(f"URL: {url}")
+        return "\n".join(parts)
+    except Exception:
+        return None
+
+
 def _build_text(message) -> str | None:
     """Return the message text with any link preview appended.
+
+    First tries Telegram's own MessageMediaWebPage preview (zero latency).
+    Falls back to fetching the first URL in the message body when the
+    Telegram preview is empty — which happens when Telegram's crawler
+    hasn't finished processing the link yet.
 
     Returns None if there is neither text nor a usable preview (e.g. photo-only).
     """
     text = message.message or ""
     preview = _extract_preview(message)
+    if not preview:
+        url = _find_first_url(text)
+        if url:
+            preview = _fetch_url_preview(url)
+            if preview:
+                logger.debug("Fetched URL preview for %s", url)
     if not text and not preview:
         return None
     if not preview:
