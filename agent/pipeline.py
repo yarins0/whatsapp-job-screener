@@ -76,15 +76,12 @@ if __name__ == "__main__":  # pragma: no cover
         ),
         "timestamp": 1700000000,
     }
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        print("Error: ANTHROPIC_API_KEY is not set. Add it to your .env file.")
-    else:
-        from db.init_db import init_db
-        init_db()
+    from db.init_db import init_db
+    init_db()
 
-        print("Running smoke test — sending a sample message through the pipeline...")
-        try:
-            result = asyncio.run(run_pipeline(sample, notify=False))
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-        except Exception as error:
-            print(f"Error: {error}")
+    print("Running smoke test — sending a sample message through the pipeline...")
+    try:
+        result = asyncio.run(run_pipeline(sample, notify=False))
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    except Exception as error:
+        print(f"Error: {error}")

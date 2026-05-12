@@ -91,16 +91,25 @@ def _load_sources() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 def _extract_preview(message) -> str | None:
-    """Return title + description from a Telegram link preview, or None.
+    """Return labeled preview fields from a Telegram link preview, or None.
 
     Uses duck typing so no Telethon type import is needed at module level.
     Only MessageMediaWebPage objects have a .webpage attribute with .title /
-    .description; all other media types (photos, videos, etc.) are ignored.
+    .description / .url; all other media types (photos, videos, etc.) are ignored.
+
+    Fields are labeled (Title: / Description: / URL:) so the LLM can reliably
+    map each line to the correct schema field without guessing.
     """
     webpage = getattr(getattr(message, "media", None), "webpage", None)
     if webpage is None:
         return None
-    parts = [p for p in (getattr(webpage, "title", None), getattr(webpage, "description", None)) if p]
+    title = getattr(webpage, "title", None)
+    description = getattr(webpage, "description", None)
+    url = getattr(webpage, "url", None)
+    parts = []
+    if title:       parts.append(f"Title: {title}")
+    if description: parts.append(f"Description: {description}")
+    if url:         parts.append(f"URL: {url}")
     return "\n".join(parts) if parts else None
 
 

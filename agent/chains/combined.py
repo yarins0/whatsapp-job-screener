@@ -47,8 +47,9 @@ Rules:
   * "skills" is a flat list of concrete technologies (e.g. "Python", "React"), not soft skills.
   * "summary" must be a single neutral sentence (<= 25 words).
   * Preserve the original language for titles and company names.
-  * If a "[Link preview]" block is present, prefer its title for the "title" field
-    over any title mentioned in the message body — the preview is more structured.
+  * If a "[Link preview]" block is present, its fields are labeled (Title: / Description: / URL:).
+    Use the "Title:" line for the "title" field — it is more structured than the message body.
+    Use the "URL:" line for the "contact" field if no better application URL appears in the body.
   * "contact" must include any URL (http:// or https://) present in the message — even if it
     is not explicitly labelled as a contact link. A URL is always the contact field unless
     a different field is a more obvious fit. If there are multiple URLs, prefer the one that
