@@ -40,15 +40,15 @@ def get_llm() -> BaseChatModel:
         return ChatAnthropic(model=model, temperature=0)  # type: ignore[call-arg]
 
     if provider == "openai":
-        from langchain_openai import ChatOpenAI
+        from langchain_openai import ChatOpenAI  # type: ignore[import-untyped]
         return ChatOpenAI(model=model, temperature=0)
 
     if provider == "google":
-        from langchain_google_genai import ChatGoogleGenerativeAI
+        from langchain_google_genai import ChatGoogleGenerativeAI  # type: ignore[import-untyped]
         return ChatGoogleGenerativeAI(model=model, temperature=0)
 
     if provider == "ollama":
-        from langchain_ollama import ChatOllama
+        from langchain_ollama import ChatOllama  # type: ignore[import-untyped]
         return ChatOllama(model=model, temperature=0)
 
     raise ValueError(
