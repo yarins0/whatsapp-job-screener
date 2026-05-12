@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
+from html.parser import HTMLParser
 
+import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -22,6 +25,101 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# URL preview enrichment — runs for all sources before the pipeline
+# ---------------------------------------------------------------------------
+
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _find_first_url(text: str) -> str | None:
+    match = _URL_RE.search(text)
+    return match.group(0).rstrip(".,)>") if match else None
+
+
+class _OGParser(HTMLParser):
+    """Extract og:title, og:description, and <title> from an HTML snippet."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.og_title: str | None = None
+        self.og_description: str | None = None
+        self.page_title: str | None = None
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag == "title":
+            self._in_title = True
+            return
+        if tag != "meta":
+            return
+        d = dict(attrs)
+        prop = (d.get("property") or d.get("name") or "").lower()
+        content = d.get("content") or ""
+        if prop == "og:title" and not self.og_title:
+            self.og_title = content.strip()
+        elif prop == "og:description" and not self.og_description:
+            self.og_description = content.strip()
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title and not self.page_title:
+            self.page_title = data.strip()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self._in_title = False
+
+
+def _fetch_url_preview(url: str) -> str | None:
+    """Fetch OG metadata from a URL and return labeled preview lines, or None.
+
+    Times out after 5 seconds and reads at most 50 KB so it never blocks
+    the event loop thread for long.
+    """
+    try:
+        resp = requests.get(
+            url,
+            timeout=5,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; JobBot/1.0)"},
+            allow_redirects=True,
+        )
+        if not resp.ok or "text/html" not in resp.headers.get("Content-Type", ""):
+            return None
+        parser = _OGParser()
+        parser.feed(resp.text[:50_000])
+        title = parser.og_title or parser.page_title
+        description = parser.og_description
+        if not title and not description:
+            return None
+        parts = []
+        if title:
+            parts.append(f"Title: {title}")
+        if description:
+            parts.append(f"Description: {description}")
+        parts.append(f"URL: {url}")
+        return "\n".join(parts)
+    except Exception:
+        return None
+
+
+async def _enrich_text(text: str) -> str:
+    """Append a [Link preview] block to text if one is not already present.
+
+    Runs the HTTP fetch in a thread so the async event loop is not blocked.
+    Returns the original text unchanged if no URL is found or the fetch fails.
+    """
+    if "[Link preview]" in text:
+        return text  # Telegram listener already enriched this message
+    url = _find_first_url(text)
+    if not url:
+        return text
+    preview = await asyncio.to_thread(_fetch_url_preview, url)
+    if not preview:
+        return text
+    logger.debug("Fetched URL preview for %s", url)
+    return f"{text}\n\n[Link preview]\n{preview}"
+
 
 # ---------------------------------------------------------------------------
 # Retry queue
@@ -122,14 +220,16 @@ async def healthz() -> dict[str, str]:
 
 @app.post("/ingest")
 async def ingest(msg: Message) -> dict:
+    msg_data = msg.model_dump()
+    msg_data["text"] = await _enrich_text(msg_data["text"])
     try:
-        result = await run_pipeline(msg.model_dump())
+        result = await run_pipeline(msg_data)
     except Exception as exc:
         logger.warning(
             "Pipeline error, queuing retry 1/%d in %ds — group=%s: %s",
             _MAX_RETRIES, _RETRY_DELAYS_S[0], msg.group, type(exc).__name__,
         )
-        _enqueue_retry(msg.model_dump(), attempt=0)
+        _enqueue_retry(msg_data, attempt=0)
         return {"status": "queued_for_retry", "reason": type(exc).__name__}
 
     action = result.get("action")
