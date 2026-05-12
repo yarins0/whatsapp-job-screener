@@ -1,4 +1,4 @@
-"""Extractor tests — mock the Anthropic client for offline determinism."""
+"""Extractor tests — mock get_llm for offline determinism."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ import pytest
 from agent.chains.extractor import ExtractionResult, JobPost, extract_job
 
 
-def _mock_client(jobs: list[dict]) -> MagicMock:
+def _mock_llm(jobs: list[dict]) -> MagicMock:
     parsed_jobs = [JobPost(**j) for j in jobs]
-    mock_response = MagicMock()
-    mock_response.parsed_output = ExtractionResult(jobs=parsed_jobs)
-    mock_client = MagicMock()
-    mock_client.messages.parse = AsyncMock(return_value=mock_response)
-    return mock_client
+    mock_chain = MagicMock()
+    mock_chain.ainvoke = AsyncMock(return_value=ExtractionResult(jobs=parsed_jobs))
+    mock_llm = MagicMock()
+    mock_llm.with_structured_output.return_value = mock_chain
+    return mock_llm
 
 
 @pytest.mark.asyncio
@@ -30,7 +30,7 @@ async def test_extractor_returns_jobpost_list():
         "contact": "jobs@acme.io",
         "summary": "Senior Backend Engineer at Acme in Tel Aviv (hybrid).",
     }
-    with patch("agent.chains.extractor._client", _mock_client([job])):
+    with patch("agent.chains.extractor.get_llm", return_value=_mock_llm([job])):
         result = await extract_job("Hiring senior backend at Acme...")
 
     assert isinstance(result, list)
@@ -53,7 +53,7 @@ async def test_extractor_allows_null_fields():
         "contact": None,
         "summary": "A Node.js role.",
     }
-    with patch("agent.chains.extractor._client", _mock_client([job])):
+    with patch("agent.chains.extractor.get_llm", return_value=_mock_llm([job])):
         result = await extract_job("Some thin job post")
 
     assert result[0]["title"] == "Node.js developer"
@@ -71,7 +71,7 @@ async def test_extractor_returns_multiple_jobs():
          "remote": True, "skills": ["React"], "salary": None,
          "contact": "b@acme.io", "summary": "Frontend role."},
     ]
-    with patch("agent.chains.extractor._client", _mock_client(jobs)):
+    with patch("agent.chains.extractor.get_llm", return_value=_mock_llm(jobs)):
         result = await extract_job("Two openings at Acme...")
 
     assert len(result) == 2

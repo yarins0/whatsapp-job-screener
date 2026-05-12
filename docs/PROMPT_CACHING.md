@@ -1,5 +1,7 @@
 # Prompt Caching
 
+> **Anthropic only.** `PROMPT_CACHE_TTL` is silently ignored when `LLM_PROVIDER` is set to `openai`, `google`, or `ollama`.
+
 The three LLM chains (classifier, extractor, combined) can cache their system prompts on Anthropic's servers between calls. Controlled by `PROMPT_CACHE_TTL` in `.env`.
 
 ## Options

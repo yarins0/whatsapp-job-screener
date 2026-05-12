@@ -34,7 +34,7 @@ from typing_extensions import TypedDict
 from agent.chains.classifier import classify_message
 from agent.chains.combined import classify_and_extract
 from agent.chains.extractor import extract_job
-from agent.tools.dedup_tool import is_duplicate
+from agent.tools.dedup_tool import is_duplicate, is_time_duplicate
 from agent.tools.filter_tool import filter_job
 from agent.tools.stats_tool import get_pipeline_mode, record_message
 from agent.tools.store_tool import store_job
@@ -155,7 +155,9 @@ async def process_jobs(state: PipelineState) -> dict:
 
     for job in jobs:
         # Dedup — atomic INSERT OR IGNORE on seen_hashes table.
-        if is_duplicate(job):
+        # A previously-seen hash is still allowed through if the same role
+        # hasn't been stored within the duplicate window (re-post from long ago).
+        if is_duplicate(job) and is_time_duplicate(job.get("title"), job.get("company")):
             skipped_jobs.append({"job": job, "reason": "duplicate"})
             continue
 

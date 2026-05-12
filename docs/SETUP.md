@@ -36,24 +36,48 @@ copy .env.example .env   # Windows
 # cp .env.example .env   # Mac / Linux
 ```
 
-Open `.env` in any text editor. Set the API key for whichever LLM provider you choose (see [Choosing an LLM](#choosing-an-llm)).
+Open `.env` in any text editor and fill in the sections below.
 
-| Variable | Required | How to get it |
-|---|---|---|
-| `LLM_PROVIDER` | No | `anthropic` (default), `openai`, `google`, or `ollama` |
-| `LLM_MODEL` | No | Model name for your provider (see [Choosing an LLM](#choosing-an-llm)) |
-| `ANTHROPIC_API_KEY` | If using Anthropic | [console.anthropic.com](https://console.anthropic.com/) → API Keys |
-| `OPENAI_API_KEY` | If using OpenAI | [platform.openai.com](https://platform.openai.com/) → API Keys |
-| `GOOGLE_API_KEY` | If using Google | [aistudio.google.com](https://aistudio.google.com/) → Get API key |
-| `TELEGRAM_BOT_TOKEN` | No | Chat with [@BotFather](https://t.me/BotFather) → `/newbot` |
-| `TELEGRAM_CHAT_ID` | No | Message your bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and find `"chat": {"id": ...}` |
-| `TELEGRAM_API_ID` | No (Telegram source) | [my.telegram.org](https://my.telegram.org) → API Development Tools → your app's `api_id` |
-| `TELEGRAM_API_HASH` | No (Telegram source) | Same page — your app's `api_hash` |
-| `TELEGRAM_PHONE` | No (Telegram source) | Your phone number, e.g. `+972501234567` |
-| `LANGSMITH_API_KEY` | No | Free account at [smith.langchain.com](https://smith.langchain.com) |
-| `LANGSMITH_TRACING` | No | Set `true` to enable LangSmith tracing |
-| `LANGSMITH_ENDPOINT` | No | `https://api.smith.langchain.com` (default, rarely needs changing) |
-| `LANGSMITH_PROJECT` | No | Project name in LangSmith (defaults to `default` if omitted) |
+### LLM provider (required — pick one)
+
+See [Choosing an LLM](#choosing-an-llm) for the full comparison. Default is Anthropic.
+
+| Variable | Purpose |
+|---|---|
+| `LLM_PROVIDER` | `anthropic` (default), `openai`, `google`, or `ollama` |
+| `LLM_MODEL` | Override the default model for your chosen provider |
+| `ANTHROPIC_API_KEY` | Required when `LLM_PROVIDER=anthropic` — [console.anthropic.com](https://console.anthropic.com/) → API Keys |
+| `OPENAI_API_KEY` | Required when `LLM_PROVIDER=openai` — [platform.openai.com](https://platform.openai.com/) → API Keys |
+| `GOOGLE_API_KEY` | Required when `LLM_PROVIDER=google` — [aistudio.google.com](https://aistudio.google.com/) → Get API key |
+
+### Telegram notifications (recommended)
+
+Without these the agent still screens jobs and stores them in the database — you just won't get real-time alerts or the daily digest. **Strongly recommended** for a useful experience.
+
+| Variable | Purpose |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Enables instant job alerts, daily digest, and bot commands. Create a bot via [@BotFather](https://t.me/BotFather) → `/newbot` |
+| `TELEGRAM_CHAT_ID` | Your Telegram user ID — the bot sends alerts here. Message your bot, then open `https://api.telegram.org/bot<TOKEN>/getUpdates` and find `"chat": {"id": ...}` |
+
+### Telegram source listener (optional)
+
+Only needed if you want to watch **Telegram channels** for job posts (in addition to WhatsApp groups).
+
+| Variable | Purpose |
+|---|---|
+| `TELEGRAM_API_ID` | From [my.telegram.org](https://my.telegram.org) → API Development Tools → `api_id` |
+| `TELEGRAM_API_HASH` | Same page — `api_hash` |
+| `TELEGRAM_PHONE` | Your phone number, e.g. `+972501234567` |
+
+### Observability (optional)
+
+LangSmith gives you a trace of every LLM call — useful for debugging why a message was or wasn't classified correctly.
+
+| Variable | Purpose |
+|---|---|
+| `LANGSMITH_API_KEY` | Free account at [smith.langchain.com](https://smith.langchain.com) |
+| `LANGSMITH_TRACING` | Set `true` to enable tracing |
+| `LANGSMITH_PROJECT` | Groups traces in the UI (defaults to `default`) |
 
 ---
 
@@ -102,6 +126,8 @@ A QR code will appear in the terminal. **Scan it with WhatsApp** (Settings → L
   120363YYYYYYYYYY@g.us  —  Junior Dev Positions
 ```
 
+> **Tip:** Once the QR code is scanned and the listener connects, `agent/all_whatsapp_groups.json` is written automatically with all your groups. If you configured Telegram in Step 2, send `/listgroups` to your bot to see the same list with watched groups marked ✓. You can also use `/addgroup <id>` and `/removegroup <id>` any time later to add or remove groups without editing the file.
+
 Add the groups you want to watch to `agent/whatsapp_sources.json`:
 
 ```json
@@ -140,6 +166,11 @@ Enter the code sent to your Telegram account when prompted. Once you see `Telegr
 ---
 
 ## Step 7 — Start the agent
+### This is the only step you will have to repeat 
+
+**Recommended** - Click on Start Job Screener.bat to start quickly every time (create a shortcut to this file and start the bot easily anythime you want).
+
+**Or**
 
 ```bash
 python start.py
@@ -201,13 +232,16 @@ pip install langchain-openai
 ```
 
 **Example — run fully locally with Ollama:**
+
+First, install Ollama itself from **[ollama.com/download](https://ollama.com/download)** and reopen your terminal so it's on your PATH. Then:
+
 ```env
 LLM_PROVIDER=ollama
 LLM_MODEL=llama3.2
 ```
 ```bash
 pip install langchain-ollama
-ollama pull llama3.2
+ollama pull llama3.2   # one-time ~2GB download
 ```
 
 If `LLM_PROVIDER` is not set, the agent defaults to Anthropic Claude Haiku.
@@ -216,18 +250,6 @@ If `LLM_PROVIDER` is not set, the agent defaults to Anthropic Claude Haiku.
 
 ## LangSmith observability
 
-Set these variables in `.env` to enable tracing:
+Set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY` in `.env` (free account at [smith.langchain.com](https://smith.langchain.com)).
 
-```
-LANGSMITH_TRACING=true
-LANGSMITH_API_KEY=<your key from smith.langchain.com>
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_PROJECT=job-screener   # optional — groups traces in the UI
-```
-
-Every chain invocation (classifier, extractor, combined) is then visible at [smith.langchain.com](https://smith.langchain.com) with the exact prompt sent, the raw LLM response, latency, and token cost per step.
-
-Useful for:
-- Debugging why a message was or wasn't classified as a job post
-- Inspecting extractor output when fields are missing or wrong
-- Comparing separate vs combined mode cost per group
+Every chain invocation is then visible with the exact prompt, raw LLM response, latency, and token cost — useful for debugging why a message was or wasn't classified correctly.

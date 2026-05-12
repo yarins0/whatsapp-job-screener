@@ -75,12 +75,14 @@ def _process_job(job: dict, source_name: str) -> str:
     Returns one of: "stored", "duplicate", "time-duplicate", or the filter
     rejection reason (e.g. "blocklist match: sales").
     """
-    from agent.tools.dedup_tool import is_duplicate
+    from agent.tools.dedup_tool import is_duplicate, is_time_duplicate
     from agent.tools.filter_tool import filter_job
     from agent.tools.store_tool import store_job
 
-    # Cross-poll dedup: title+company+contact hash stored in seen_hashes.
-    if is_duplicate(job):
+    # Cross-poll dedup: hash seen before AND stored within the duplicate window.
+    # A previously-seen hash is allowed through if the role hasn't been stored
+    # recently — same logic as the LangGraph pipeline path in graph.py.
+    if is_duplicate(job) and is_time_duplicate(job.get("title"), job.get("company")):
         logger.debug("Skipping duplicate: %s @ %s", job.get("title"), job.get("company"))
         return "duplicate"
 

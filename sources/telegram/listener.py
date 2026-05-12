@@ -87,6 +87,40 @@ def _load_sources() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Link preview extraction
+# ---------------------------------------------------------------------------
+
+def _extract_preview(message) -> str | None:
+    """Return title + description from a Telegram link preview, or None.
+
+    Uses duck typing so no Telethon type import is needed at module level.
+    Only MessageMediaWebPage objects have a .webpage attribute with .title /
+    .description; all other media types (photos, videos, etc.) are ignored.
+    """
+    webpage = getattr(getattr(message, "media", None), "webpage", None)
+    if webpage is None:
+        return None
+    parts = [p for p in (getattr(webpage, "title", None), getattr(webpage, "description", None)) if p]
+    return "\n".join(parts) if parts else None
+
+
+def _build_text(message) -> str | None:
+    """Return the message text with any link preview appended.
+
+    Returns None if there is neither text nor a usable preview (e.g. photo-only).
+    """
+    text = message.message or ""
+    preview = _extract_preview(message)
+    if not text and not preview:
+        return None
+    if not preview:
+        return text
+    if not text:
+        return preview
+    return f"{text}\n\n[Link preview]\n{preview}"
+
+
+# ---------------------------------------------------------------------------
 # Ingest forwarding
 # ---------------------------------------------------------------------------
 
@@ -201,9 +235,9 @@ async def run_listener() -> None:
 
     @client.on(events.NewMessage(chats=entity_objects))
     async def _on_message(event) -> None:
-        text = event.message.message
+        text = _build_text(event.message)
         if not text:
-            return  # skip media-only messages
+            return  # skip media-only messages with no preview
         chat = await event.get_chat()
         source_name = entity_names.get(chat.id) or getattr(chat, "title", None) or str(chat.id)
         timestamp = int(event.message.date.timestamp())
@@ -221,11 +255,11 @@ async def run_listener() -> None:
         since_dt = datetime.fromtimestamp(since, tz=timezone.utc)
         try:
             messages = await client.get_messages(entity, limit=100, offset_date=since_dt, reverse=True)
-            missed = [m for m in messages if m.message and int(m.date.timestamp()) > since]
+            missed = [m for m in messages if _build_text(m) and int(m.date.timestamp()) > since]
             if missed:
                 logger.info("[catch-up] %s: replaying %d missed message(s)", source_name, len(missed))
                 for m in missed:
-                    _forward(m.message, source_name, int(m.date.timestamp()))
+                    _forward(_build_text(m), source_name, int(m.date.timestamp()))
                 _update_last_seen(entity_id, int(missed[-1].date.timestamp()))
         except Exception as exc:
             logger.warning("[catch-up] Could not catch up on %s — skipping. %s: %s", source_name, type(exc).__name__, exc)

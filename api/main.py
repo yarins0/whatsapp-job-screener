@@ -133,13 +133,22 @@ async def ingest(msg: Message) -> dict:
         return {"status": "queued_for_retry", "reason": type(exc).__name__}
 
     action = result.get("action")
-    if action == "stored":
+    if action == "stored" and "job" in result:
+        # Single stored job — legacy flat shape.
         job = result.get("job") or {}
         title = job.get("title") or "unknown"
         company = job.get("company") or "?"
         location = "Remote" if job.get("remote") else (job.get("location") or "")
         loc_part = f" ({location})" if location else ""
         logger.info("STORED   | %s @ %s%s | id=%s", title, company, loc_part, result.get("job_id"))
+    elif action in ("stored", "partial") and "stored" in result:
+        # Multiple jobs in one message.
+        stored = result.get("stored") or []
+        skipped = result.get("skipped") or []
+        logger.info(
+            "STORED   | %d job(s) stored, %d skipped | group=%s",
+            len(stored), len(skipped), msg.group,
+        )
     else:
         reason = result.get("reason", "unknown")
         job = result.get("job") or {}

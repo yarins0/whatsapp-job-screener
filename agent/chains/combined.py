@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from typing import List, Optional
 
-import anthropic
 from pydantic import BaseModel, Field
 
-from agent.chains.cache_config import get_cache_control
+from langchain_core.messages import HumanMessage
+
+from agent.chains.llm_factory import build_system_message, get_llm
 
 
 class JobFields(BaseModel):
@@ -47,24 +47,14 @@ Rules:
   * "skills" is a flat list of concrete technologies (e.g. "Python", "React"), not soft skills.
   * "summary" must be a single neutral sentence (<= 25 words).
   * Preserve the original language for titles and company names.
+  * If a "[Link preview]" block is present, prefer its title for the "title" field
+    over any title mentioned in the message body — the preview is more structured.
   * "contact" must include any URL (http:// or https://) present in the message — even if it
     is not explicitly labelled as a contact link. A URL is always the contact field unless
     a different field is a more obvious fit. If there are multiple URLs, prefer the one that
     looks like an application or job link.
 
 When is_job_post is false, set jobs to []."""
-
-_MODEL = os.getenv("LLM_MODEL") or "claude-haiku-4-5-20251001"
-
-# Module-level client — replaced in tests via patch("agent.chains.combined._client").
-_client: anthropic.AsyncAnthropic | None = None
-
-
-def _get_client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.AsyncAnthropic()
-    return _client
 
 
 async def classify_and_extract(message: str) -> dict:
@@ -73,19 +63,11 @@ async def classify_and_extract(message: str) -> dict:
     Returns a dict with keys ``is_job_post`` (bool), ``confidence`` (float),
     and ``jobs`` (list of job dicts).
     """
-    system_block: dict = {"type": "text", "text": _SYSTEM_PROMPT}
-    cache_control = get_cache_control()
-    if cache_control is not None:
-        system_block["cache_control"] = cache_control
-
-    response = await _get_client().messages.parse(
-        model=_MODEL,
-        max_tokens=1024,
-        system=[system_block],
-        messages=[{"role": "user", "content": f"Message:\n{message}"}],
-        output_format=CombinedResult,
-    )
-    result = response.parsed_output
+    chain = get_llm().with_structured_output(CombinedResult)
+    result: CombinedResult = await chain.ainvoke([
+        build_system_message(_SYSTEM_PROMPT),
+        HumanMessage(content=f"Message:\n{message}"),
+    ])
     return {
         "is_job_post": result.is_job_post,
         "confidence": result.confidence,

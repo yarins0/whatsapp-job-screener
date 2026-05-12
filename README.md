@@ -8,6 +8,21 @@ Telegram alerts and a daily digest.
 
 ---
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><b>Job notifications</b></td>
+    <td align="center"><b>Bot commands</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshot-notifications.png" width="300" alt="Job notification alerts in Telegram"/></td>
+    <td><img src="docs/screenshot-commands.png" width="300" alt="Bot /start command response"/></td>
+  </tr>
+</table>
+
+---
+
 ## Getting started
 
 See **[docs/SETUP.md](docs/SETUP.md)** for the full setup guide — prerequisites,
@@ -38,12 +53,13 @@ Per extracted job: **dedup → filter → store → notify**
 
 ### LLM chains (`agent/chains/`)
 
-Direct Anthropic SDK (`anthropic.AsyncAnthropic`) with `messages.parse()` and
-Pydantic-enforced structured outputs — no prompt format instructions, no JSON
-parse failures. Model defaults to `claude-haiku-4-5` (overridable via `LLM_MODEL`).
+LangChain `with_structured_output()` with Pydantic-enforced outputs — works with
+any supported provider. The provider factory (`agent/chains/llm_factory.py`) reads
+`LLM_PROVIDER` and `LLM_MODEL` from `.env` and returns the right model. Defaults to
+Anthropic Claude Haiku. Supports `anthropic`, `openai`, `google`, and `ollama`.
 
-Prompt caching is configurable via `PROMPT_CACHE_TTL` in `.env`.
-See **[docs/PROMPT_CACHING.md](docs/PROMPT_CACHING.md)** for options and break-even math.
+Prompt caching (`PROMPT_CACHE_TTL`) is Anthropic-only and is silently ignored for
+other providers. See **[docs/PROMPT_CACHING.md](docs/PROMPT_CACHING.md)** for options and break-even math.
 
 ---
 
@@ -55,9 +71,9 @@ See **[docs/PROMPT_CACHING.md](docs/PROMPT_CACHING.md)** for options and break-e
 | Telegram source | Python + Telethon userbot — watches channels, catch-up replay |
 | Web scraper source | Python + BeautifulSoup — structured HTML extraction, no LLM |
 | API / ingest | Python + FastAPI + in-memory retry queue (3 attempts, backoff) |
-| LLM calls | Anthropic SDK — `messages.parse()` with Pydantic structured outputs |
+| LLM calls | LangChain `with_structured_output()` — provider-agnostic, Pydantic structured outputs |
 | Pipeline orchestration | LangGraph `StateGraph` |
-| LLM model | `claude-haiku-4-5` (default) — override via `LLM_PROVIDER` + `LLM_MODEL` |
+| LLM provider | Anthropic (default), OpenAI, Google Gemini, or Ollama — set via `LLM_PROVIDER` + `LLM_MODEL` |
 | Database | SQLite — `jobs`, `seen_hashes`, `group_stats` |
 | Vector search | ChromaDB — `all-MiniLM-L6-v2` embeddings, persisted to `db/chroma/` |
 | Scheduler | APScheduler — daily digest + web scraper polling |
@@ -95,10 +111,11 @@ agent/
   graph.py           LangGraph StateGraph — nodes, edges, routing, Telegram notify
   prefs.json         User preferences (roles, blocklist, location_blocklist)
   chains/
+    llm_factory.py   Provider factory — get_llm(), build_system_message()
     classifier.py    classify_message() — is_job_post + confidence
     extractor.py     extract_job()      — list of JobPost dicts
     combined.py      classify_and_extract() — single-call mode
-    cache_config.py  PROMPT_CACHE_TTL toggle (off / 5m / 1h)
+    cache_config.py  PROMPT_CACHE_TTL toggle (off / 5m / 1h / auto) — Anthropic only
   list_jobs.py       CLI: python -m agent.list_jobs [--days N] [--role KW] [--unseen]
   tools/
     filter_tool.py          Match job against prefs.json

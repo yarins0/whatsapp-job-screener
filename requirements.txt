@@ -1,8 +1,12 @@
 langchain>=0.3.0
 langgraph>=0.2.0
-langchain-anthropic>=0.3.0
-langchain-community>=0.3.0
 langchain-core>=0.3.0
+langchain-community>=0.3.0
+# LLM providers — uncomment whichever you need
+langchain-anthropic>=0.3.0       # LLM_PROVIDER=anthropic (default)
+# langchain-openai>=0.2.0        # LLM_PROVIDER=openai
+# langchain-google-genai>=2.0.0  # LLM_PROVIDER=google
+# langchain-ollama>=0.2.0        # LLM_PROVIDER=ollama
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 apscheduler>=3.10.0

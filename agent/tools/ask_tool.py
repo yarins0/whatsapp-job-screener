@@ -43,12 +43,8 @@ No explanation, no markdown — only the JSON object."""
 
 
 def _default_llm() -> BaseLanguageModel:
-    import os
-    from langchain_anthropic import ChatAnthropic
-    return ChatAnthropic(
-        model=os.getenv("LLM_MODEL", "claude-haiku-4-5-20251001"),
-        temperature=0,
-    )
+    from agent.chains.llm_factory import get_llm
+    return get_llm()
 
 
 def ask_jobs(question: str, *, llm: Optional[BaseLanguageModel] = None) -> str:
