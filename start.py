@@ -17,10 +17,12 @@ Processes:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -60,8 +62,41 @@ class _NullProc:
         pass
 
 
+_WHATSAPP_LOCK = Path("sources/whatsapp/.wwebjs_auth/session/SingletonLock")
+_API_PORT = 8000
+
+
+def _cleanup_stale_resources() -> None:
+    # Kill any process still holding the API port from a previous run.
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True
+        )
+        for line in result.stdout.splitlines():
+            if f":{_API_PORT}" in line and "LISTENING" in line:
+                match = re.search(r"(\d+)\s*$", line.strip())
+                if match:
+                    pid = match.group(1)
+                    subprocess.run(["taskkill", "/F", "/PID", pid],
+                                   capture_output=True)
+                    _log("info", f"Killed stale process on port {_API_PORT} (pid {pid})")
+    except Exception:
+        pass
+
+    # Remove the Chrome SingletonLock left behind if whatsapp crashed.
+    if _WHATSAPP_LOCK.exists():
+        try:
+            _WHATSAPP_LOCK.unlink()
+            _log("info", "Removed stale WhatsApp SingletonLock")
+        except Exception:
+            pass
+
+
 def main() -> None:
     python = sys.executable  # same venv Python that's running this script
+
+    _cleanup_stale_resources()
 
     # (label, command, auto_restart)
     # The API and digest cannot auto-restart safely (hold ports / critical state).
