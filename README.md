@@ -160,6 +160,9 @@ docs/
   SETUP.md           Full setup guide
   PROMPT_CACHING.md  Caching options + break-even math
 
+Start Job Screener.bat   Windows launcher (double-click or shortcut)
+start.sh                 macOS / Linux launcher (bash start.sh)
+
 tests/               122 Python tests (offline)
 ```
 

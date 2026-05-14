@@ -166,11 +166,19 @@ Enter the code sent to your Telegram account when prompted. Once you see `Telegr
 ---
 
 ## Step 7 — Start the agent
-### This is the only step you will have to repeat 
+### This is the only step you will have to repeat
 
-**Recommended** - Click on Start Job Screener.bat to start quickly every time (create a shortcut to this file and start the bot easily anythime you want).
+**Windows** — double-click `Start Job Screener.bat` (or create a desktop shortcut to it).
 
-**Or**
+**macOS / Linux** — run in a terminal:
+
+```bash
+bash start.sh
+```
+
+> Tip: make it executable once with `chmod +x start.sh`, then you can just run `./start.sh`.
+
+**Or directly on any OS:**
 
 ```bash
 python start.py

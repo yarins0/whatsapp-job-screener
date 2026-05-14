@@ -66,23 +66,34 @@ _WHATSAPP_LOCK = Path("sources/whatsapp/.wwebjs_auth/session/SingletonLock")
 _API_PORT = 8000
 
 
-def _cleanup_stale_resources() -> None:
-    # Kill any process still holding the API port from a previous run.
+def _kill_port(port: int) -> None:
+    """Kill whatever process is listening on *port*, cross-platform."""
     try:
-        result = subprocess.run(
-            ["netstat", "-ano"],
-            capture_output=True, text=True
-        )
-        for line in result.stdout.splitlines():
-            if f":{_API_PORT}" in line and "LISTENING" in line:
-                match = re.search(r"(\d+)\s*$", line.strip())
-                if match:
-                    pid = match.group(1)
-                    subprocess.run(["taskkill", "/F", "/PID", pid],
-                                   capture_output=True)
-                    _log("info", f"Killed stale process on port {_API_PORT} (pid {pid})")
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["netstat", "-ano"], capture_output=True, text=True
+            )
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    match = re.search(r"(\d+)\s*$", line.strip())
+                    if match:
+                        pid = match.group(1)
+                        subprocess.run(["taskkill", "/F", "/PID", pid],
+                                       capture_output=True)
+                        _log("info", f"Killed stale process on port {port} (pid {pid})")
+        else:
+            result = subprocess.run(
+                ["lsof", "-ti", f"tcp:{port}"], capture_output=True, text=True
+            )
+            for pid in result.stdout.strip().splitlines():
+                subprocess.run(["kill", "-9", pid], capture_output=True)
+                _log("info", f"Killed stale process on port {port} (pid {pid})")
     except Exception:
         pass
+
+
+def _cleanup_stale_resources() -> None:
+    _kill_port(_API_PORT)
 
     # Remove the Chrome SingletonLock left behind if whatsapp crashed.
     if _WHATSAPP_LOCK.exists():
