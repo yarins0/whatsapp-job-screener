@@ -66,6 +66,51 @@ _ask_counts: dict[int, int] = {}
 
 
 # ---------------------------------------------------------------------------
+# Command list strings — extracted so /start and /commands share the same text
+# ---------------------------------------------------------------------------
+
+def _owner_command_list() -> str:
+    return (
+        "Job Screener Bot — available commands:\n\n"
+        "Jobs:\n"
+        "/jobs — recent jobs (last 7 days)\n"
+        "/jobs <keyword> — filter by keyword\n"
+        "/jobs <keyword> unseen — keyword + unseen only\n"
+        "/ask <question> — natural-language search (e.g. remote Python jobs this week)\n"
+        "/similar <text> — find semantically similar jobs (e.g. Python backend FastAPI)\n"
+        "/reindex — re-index all stored jobs in the vector store\n"
+        "/resend [N] — re-send notifications for jobs stored in last N hours (default 2)\n\n"
+        "Preferences:\n"
+        "/prefs — show current roles, blocklist, and blocked cities\n"
+        "/blockrole <keyword> — add a keyword to the role blocklist\n"
+        "/blockcity <city> — add a city to the location blocklist\n"
+        "/addrole <keyword> — add a keyword to the roles allow-list\n\n"
+        "WhatsApp groups:\n"
+        "/listgroups — list ALL groups on your WhatsApp account (with IDs)\n"
+        "/groups — list currently watched groups\n"
+        "/addgroup <id> — start watching a group\n"
+        "/removegroup <id> — stop watching a group\n\n"
+        "Telegram channels:\n"
+        "/tgsources — list watched Telegram channels\n"
+        "/addtgsource <@username or id> — start watching a channel\n"
+        "/removetgsource <@username or id> — stop watching a channel\n\n"
+        "You can also tap the Block role / Block city buttons on any job notification."
+    )
+
+
+def _demo_command_list() -> str:
+    return (
+        "Job Screener Bot — this bot monitors job groups and surfaces relevant postings automatically.\n\n"
+        f"/jobs — browse recent jobs (last 7 days)\n"
+        f"/jobs <keyword> — filter by keyword, e.g. /jobs python\n"
+        f"/ask <question> — search in plain English ({_ASK_DEMO_LIMIT} free queries per session)\n"
+        "/similar <text> — find jobs similar to a description\n"
+        "/prefs — see the active role filters and blocklists\n\n"
+        "You'll receive a message here whenever a new matching job is found."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Telegram API helpers
 # ---------------------------------------------------------------------------
 
@@ -182,59 +227,26 @@ def _handle_message(msg: dict) -> None:
             "For a full list of commands, use /commands."
         ))
 
-    elif text.startswith("/start") or text.startswith("/commands"):
+    elif text.startswith("/start"):
         if _is_owner(chat_id):
-            _send(chat_id, (
-                "Job Screener Bot — available commands:\n\n"
-                "Jobs:\n"
-                "/jobs — recent jobs (last 7 days)\n"
-                "/jobs <keyword> — filter by keyword\n"
-                "/jobs <keyword> unseen — keyword + unseen only\n"
-                "/ask <question> — natural-language search (e.g. remote Python jobs this week)\n"
-                "/similar <text> — find semantically similar jobs (e.g. Python backend FastAPI)\n"
-                "/reindex — re-index all stored jobs in the vector store\n"
-                "/resend [N] — re-send notifications for jobs stored in last N hours (default 2)\n\n"
-                "Preferences:\n"
-                "/prefs — show current roles, blocklist, and blocked cities\n"
-                "/blockrole <keyword> — add a keyword to the role blocklist\n"
-                "/blockcity <city> — add a city to the location blocklist\n"
-                "/addrole <keyword> — add a keyword to the roles allow-list\n\n"
-                "WhatsApp groups:\n"
-                "/listgroups — list ALL groups on your WhatsApp account (with IDs)\n"
-                "/groups — list currently watched groups\n"
-                "/addgroup <id> — start watching a group\n"
-                "/removegroup <id> — stop watching a group\n\n"
-                "Telegram channels:\n"
-                "/tgsources — list watched Telegram channels\n"
-                "/addtgsource <@username or id> — start watching a channel\n"
-                "/removetgsource <@username or id> — stop watching a channel\n\n"
-                "You can also tap the Block role / Block city buttons on any job notification."
-            ))
+            _send(chat_id, _owner_command_list())
         else:
-            _send(chat_id, (
-                "Job Screener Bot — available commands:\n"
-                "(You are in read-only mode — view commands are available, write commands are owner-only.)\n\n"
-                "Jobs:\n"
-                "/jobs — recent jobs (last 7 days)\n"
-                "/jobs <keyword> — filter by keyword\n"
-                "/jobs <keyword> unseen — keyword + unseen only\n"
-                f"/ask <question> — natural-language search ({_ASK_DEMO_LIMIT} free queries per session)\n"
-                "/similar <text> — find semantically similar jobs\n\n"
-                "Preferences (view only):\n"
-                "/prefs — show current roles, blocklist, and blocked cities\n"
-                "/blockrole <keyword> — 🔒 owner only\n"
-                "/blockcity <city> — 🔒 owner only\n"
-                "/addrole <keyword> — 🔒 owner only\n\n"
-                "WhatsApp groups (view only):\n"
-                "/listgroups — 🔒 owner only\n"
-                "/groups — list currently watched groups\n"
-                "/addgroup <id> — 🔒 owner only\n"
-                "/removegroup <id> — 🔒 owner only\n\n"
-                "Telegram channels (view only):\n"
-                "/tgsources — list watched Telegram channels\n"
-                "/addtgsource <@username or id> — 🔒 owner only\n"
-                "/removetgsource <@username or id> — 🔒 owner only"
-            ))
+            from agent.tools.demo_users_tool import add_demo_user
+            add_demo_user(chat_id)
+            _send(chat_id, _demo_command_list())
+            # Auto-show recent jobs so demo users see value immediately.
+            from agent.tools.query_tool import format_jobs_telegram, query_jobs
+            try:
+                jobs = query_jobs(days=7, limit=5)
+                if jobs:
+                    _send(chat_id, "Here are the latest jobs the bot found:\n\n" + format_jobs_telegram(jobs, days=7, role=None, unseen_only=False))
+                else:
+                    _send(chat_id, "No jobs stored yet — they'll appear here as the bot finds them. You'll also get a message for each new one.")
+            except Exception as exc:
+                logger.warning("Auto-show jobs on /start failed: %s", exc)
+
+    elif text.startswith("/commands"):
+        _send(chat_id, _owner_command_list() if _is_owner(chat_id) else _demo_command_list())
 
     elif text.startswith("/jobs"):
         from agent.tools.query_tool import format_jobs_telegram, query_jobs

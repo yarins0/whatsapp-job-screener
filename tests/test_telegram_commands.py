@@ -161,11 +161,12 @@ def test_start_shows_command_list(temp_prefs):
     with patch("telegram_bot._send") as mock_send:
         _handle_message(_make_msg("/start"))
 
-    reply = mock_send.call_args[0][1]
-    assert "/blockrole" in reply
-    assert "/blockcity" in reply
-    assert "/addrole" in reply
-    assert "/prefs" in reply
+    # /start sends multiple messages for demo users (command list + recent jobs).
+    # Check the first message contains the demo command list.
+    first_reply = mock_send.call_args_list[0][0][1]
+    assert "/jobs" in first_reply
+    assert "/ask" in first_reply
+    assert "/prefs" in first_reply
 
 
 def test_commands_shows_same_as_start(temp_prefs):
@@ -173,7 +174,8 @@ def test_commands_shows_same_as_start(temp_prefs):
 
     with patch("telegram_bot._send") as mock_send:
         _handle_message(_make_msg("/start"))
-        start_reply = mock_send.call_args[0][1]
+        # /start sends command list first, then recent jobs — compare first call only.
+        start_reply = mock_send.call_args_list[0][0][1]
 
     with patch("telegram_bot._send") as mock_send:
         _handle_message(_make_msg("/commands"))

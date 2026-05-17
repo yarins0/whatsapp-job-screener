@@ -186,6 +186,7 @@ async def process_jobs(state: PipelineState) -> dict:
         # Notify — instant Telegram alert so good jobs aren't missed until the digest.
         if notify:
             _notify_job(enriched, job_id)
+            _notify_demo_users(enriched)
 
     return {"stored_jobs": stored_jobs, "skipped_jobs": skipped_jobs}
 
@@ -323,6 +324,55 @@ def _md(text: str) -> str:
     for ch in ("_", "*", "`", "["):
         text = text.replace(ch, "\\" + ch)
     return text
+
+
+def _notify_demo_users(job: dict) -> None:
+    """Send a plain-text job notification to every registered demo user.
+
+    No inline buttons — demo users are read-only so the buttons would do nothing.
+    Fails silently per user so one bad chat_id never blocks the others.
+    """
+    try:
+        import os
+
+        import requests as _requests
+
+        from agent.tools.demo_users_tool import load_demo_users
+
+        token = os.environ.get("TELEGRAM_BOT_TOKEN")
+        if not token:
+            return
+        users = load_demo_users()
+        if not users:
+            return
+
+        title = job.get("title") or "Untitled role"
+        company = job.get("company") or "Unknown company"
+        is_remote = bool(job.get("remote"))
+        loc = "Remote" if is_remote else (job.get("location") or "Unknown")
+        summary = job.get("summary") or ""
+        group = job.get("group") or job.get("group_name") or ""
+        contact = job.get("contact") or (
+            f"see original message in {group}" if group else "see original message"
+        )
+
+        lines = [f"New job: *{_md(title)}* @ {_md(company)} ({_md(loc)})"]
+        if summary:
+            lines.append(_md(summary[:200]))
+        lines.append(f"Contact: {contact}")
+        text = "\n".join(lines)
+
+        for chat_id in users:
+            try:
+                _requests.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+                    timeout=10,
+                )
+            except Exception as exc:
+                logger.warning("Demo notification to chat_id=%s failed: %s", chat_id, exc)
+    except Exception as exc:
+        logger.warning("_notify_demo_users failed: %s", exc)
 
 
 def _notify_job(job: dict, job_id: int) -> None:

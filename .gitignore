@@ -41,5 +41,8 @@ db/chroma/
 # WhatsApp group snapshot — written by listener.js on connect, read by /listgroups
 agent/all_whatsapp_groups.json
 
+# Demo user registry — chat IDs of non-owner users who have started the bot
+agent/demo_users.json
+
 # Local notes
 TODO.md
