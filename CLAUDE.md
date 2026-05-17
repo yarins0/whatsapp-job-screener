@@ -84,6 +84,10 @@ A message may contain multiple job posts. The extractor normalises to a list via
 
 FastAPI endpoint at `POST /ingest`. Receives `{group, sender, text, timestamp}` from WhatsApp and Telegram source listeners.
 
+**Health endpoint:** `GET /healthz` returns `{"status": "ok"}`.
+
+**Self-ping (Render):** If `RENDER_EXTERNAL_URL` is set, a background task pings `/healthz` every 14 minutes to prevent Render free-tier spin-down (which triggers after 15 min of inactivity). No-op locally.
+
 **Retry queue:** If `run_pipeline()` raises any exception (e.g. `anthropic.APIConnectionError` on a network blip), the message is enqueued for up to 3 retries with 30s / 2min / 5min backoff. Three async workers drain the queue concurrently. The queue is in-memory (lost on restart) and capped at 500 items. Started via FastAPI `lifespan`.
 
 **Log format:** Every processed message logs one of:
@@ -97,6 +101,15 @@ SKIPPED  | reason | Job Title @ Company (Location) | group=Name
 On `ready`, reads watched group IDs from `agent/whatsapp_sources.json` (a `{id: name}` map), resolves display names, and calls `catchUp()` for each group. Re-reads the groups file on every `message` event so `/addgroup` and `/removegroup` take effect immediately.
 
 **Reconnect:** The heartbeat (every 2 min) calls `getState()`. If disconnected, calls `reconnect()` which runs `destroy()` → 3-second pause → `initialize()`. The pause is required because Chrome holds a `SingletonLock` on its user data dir until it fully exits; calling `initialize()` without waiting produces a "browser already running" error.
+
+**Puppeteer `protocolTimeout`:** Set to 120 s (up from 60 s) to prevent `Runtime.callFunctionOn timed out` errors on accounts with many chats.
+
+**QR code delivery:**
+- First QR is printed to the terminal and sent as a PNG photo to the Telegram owner chat (requires `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`).
+- Each subsequent QR (WhatsApp regenerates every ~20 s) silently edits the existing Telegram message in place via `editMessageMedia` — no extra notifications.
+- Terminal shows `"QR expired — regen another? y/n:"` and waits for input before printing again. While waiting, `pendingQr` always holds the latest code, so typing `y` prints the freshest valid QR.
+- On successful scan, the Telegram message caption is updated to `"WhatsApp connected."`.
+- `qrPrinted`, `lastQrMessageId`, `pendingQr`, and `regenPromptActive` are all reset in `reconnect()` so each new session starts clean.
 
 `sources/whatsapp/last_seen.js` — state module (`load`, `save`, `update`). Accepts a custom file path for Jest test isolation.
 
@@ -200,7 +213,7 @@ Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXIS
 
 ### Tests
 
-**Python (121 tests)** — all run offline. `conftest.py` provides:
+**Python (122 tests)** — all run offline. `conftest.py` provides:
 - `temp_db` — creates a fresh isolated DB (all three tables), sets `JOBS_DB_PATH` and `CHROMA_DB_PATH`
 - `temp_chroma` — sets `CHROMA_DB_PATH` to `tmp_path/chroma`
 - `temp_prefs` — writes a minimal `prefs.json` to a temp file and sets `PREFS_PATH`
@@ -244,6 +257,7 @@ Copy `.env.example` to `.env` and fill in:
 | `TELEGRAM_PHONE` | No (Telegram source) | Phone number for the Telethon userbot, e.g. `+972501234567` |
 | `WEB_SCRAPER_INTERVAL_MINUTES` | No | Web scraper poll interval (default: 30) |
 | `INGEST_API_URL` | No | Ingest endpoint for WhatsApp/Telegram listeners (default: `http://localhost:8000/ingest`) |
+| `RENDER_EXTERNAL_URL` | No (Render only) | Set automatically by Render — enables self-ping every 14 min to prevent free-tier spin-down |
 | `LANGSMITH_API_KEY` | No | LangSmith tracing |
 | `LANGSMITH_TRACING` | No | Set to `true` to enable tracing |
 | `LANGSMITH_ENDPOINT` | No | LangSmith API endpoint (defaults to `https://api.smith.langchain.com`) |

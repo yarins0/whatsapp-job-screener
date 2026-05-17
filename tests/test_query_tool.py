@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -22,7 +22,7 @@ def _insert_job(db_path, *, title="Software Engineer", company="Acme",
                 skills=None, contact="hr@acme.com", group_name="Tech Jobs",
                 days_ago=1, seen=0):
     """Insert a single job row with created_at set relative to now."""
-    created_at = (datetime.utcnow() - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
+    created_at = (datetime.now(UTC) - timedelta(days=days_ago)).strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
@@ -36,7 +36,7 @@ def _insert_job(db_path, *, title="Software Engineer", company="Acme",
                 title, company, location, remote,
                 json.dumps(skills or []),
                 contact, summary, group_name,
-                int(datetime.utcnow().timestamp()),
+                int(datetime.now(UTC).timestamp()),
                 seen, created_at,
             ),
         )

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "db" / "jobs.db"
@@ -40,7 +40,7 @@ def query_jobs(
     params: list = []
 
     if days > 0:
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
         conditions.append("created_at >= ?")
         params.append(cutoff.strftime("%Y-%m-%d %H:%M:%S"))
 

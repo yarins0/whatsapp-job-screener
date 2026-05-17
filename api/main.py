@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from contextlib import asynccontextmanager
@@ -182,13 +183,36 @@ async def _retry_worker() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Self-ping — keeps Render free-tier web service from spinning down
+# ---------------------------------------------------------------------------
+
+_PING_INTERVAL_S = 14 * 60  # 14 min — Render spins down after 15 min of inactivity
+
+
+async def _self_ping() -> None:
+    url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not url:
+        return
+    ping_url = f"{url.rstrip('/')}/healthz"
+    while True:
+        await asyncio.sleep(_PING_INTERVAL_S)
+        try:
+            await asyncio.to_thread(requests.get, ping_url, timeout=10)
+            logger.debug("Self-ping OK → %s", ping_url)
+        except Exception as exc:
+            logger.warning("Self-ping failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # App lifespan — start retry workers on boot
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     workers = [asyncio.create_task(_retry_worker()) for _ in range(3)]
+    ping = asyncio.create_task(_self_ping())
     yield
+    ping.cancel()
     for w in workers:
         w.cancel()
 

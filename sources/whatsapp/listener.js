@@ -15,8 +15,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const axios = require('axios');
 const lastSeen = require('./last_seen');
 
@@ -96,6 +98,9 @@ function log(level, msg) {
 // and Puppeteer will refuse to open a second browser on the same userDataDir.
 async function reconnect() {
   qrPrinted = false;
+  lastQrMessageId = null;
+  pendingQr = null;
+  regenPromptActive = false;
   try {
     await client.destroy();
   } catch (err) {
@@ -192,6 +197,78 @@ async function catchUp(groupId, snapshotTimestamp) {
 // On PC wake, the disconnected event often doesn't fire, so we poll instead.
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 
+// Readline interface for the regen prompt. Reads from the real terminal stdin
+// (inherited from start.py — only stdout is piped, not stdin).
+const rl = readline.createInterface({ input: process.stdin });
+
+// Most recent QR string received while waiting for the user to answer the
+// regen prompt. Always holds the freshest code so the user scans a valid one.
+let pendingQr = null;
+// True while the "regen?" prompt is waiting for a keypress.
+let regenPromptActive = false;
+
+// Ask the user whether to print the next QR. Waits indefinitely for input.
+function promptRegen(callback) {
+  process.stdout.write('\nQR expired — regen another? y/n: ');
+  rl.once('line', (answer) => {
+    callback(answer.trim().toLowerCase() !== 'n');
+  });
+}
+
+// Telegram message ID of the last QR photo sent. Reused to edit in place so
+// the owner sees a refreshed code without accumulating new messages.
+// Reset to null on reconnect so each new session starts with a fresh send.
+let lastQrMessageId = null;
+
+// Send or update the QR code photo in the owner's Telegram chat.
+// First call sends a new message; subsequent calls edit it in place.
+// Only runs when TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set.
+async function sendQrToTelegram(qr) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) return;
+  try {
+    const pngBuffer = await QRCode.toBuffer(qr, { scale: 8 });
+    const blob = new Blob([pngBuffer], { type: 'image/png' });
+
+    if (lastQrMessageId) {
+      // Edit the existing message so there is no new notification or chat spam.
+      // attach://photo links the multipart field named "photo" as the new media.
+      const form = new FormData();
+      form.append('chat_id', chatId);
+      form.append('message_id', String(lastQrMessageId));
+      form.append('media', JSON.stringify({ type: 'photo', media: 'attach://photo' }));
+      form.append('photo', blob, 'whatsapp-qr.png');
+      await axios.post(`https://api.telegram.org/bot${token}/editMessageMedia`, form);
+    } else {
+      const form = new FormData();
+      form.append('chat_id', chatId);
+      form.append('photo', blob, 'whatsapp-qr.png');
+      form.append('caption', 'WhatsApp QR — scan within 20 seconds.');
+      const res = await axios.post(`https://api.telegram.org/bot${token}/sendPhoto`, form);
+      lastQrMessageId = res.data.result.message_id;
+    }
+    log('info', '[qr] QR code updated in Telegram');
+  } catch (err) {
+    log('warning', `[qr] Could not update QR in Telegram: ${err.message}`);
+  }
+}
+
+// Edit the QR message to show a connected confirmation once the scan succeeds.
+async function resolveQrMessage() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId || !lastQrMessageId) return;
+  try {
+    await axios.post(`https://api.telegram.org/bot${token}/editMessageCaption`, {
+      chat_id: chatId,
+      message_id: lastQrMessageId,
+      caption: 'WhatsApp connected.',
+    });
+  } catch (_) { /* best-effort — ignore if message was already deleted */ }
+  lastQrMessageId = null;
+}
+
 // --- client ----------------------------------------------------------------
 
 // WhatsApp derives the linked-device name from the user agent string.
@@ -205,15 +282,33 @@ const client = new Client({
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   puppeteer: {
     args: ['--no-sandbox'],
-    protocolTimeout: 60000, // 60s — getChats() on large accounts can be slow
+    protocolTimeout: 120000, // 120s — getChats() on large accounts can be slow
   },
 });
 
 client.on('qr', (qr) => {
-  if (qrPrinted) return;
-  qrPrinted = true;
-  log('info', 'Scan this QR code with WhatsApp:');
-  qrcode.generate(qr, { small: true });
+  sendQrToTelegram(qr); // always update Telegram silently
+
+  if (!qrPrinted) {
+    // First QR — print immediately and start waiting for a scan.
+    qrPrinted = true;
+    log('info', 'Scan this QR code with WhatsApp:');
+    qrcode.generate(qr, { small: true });
+    return;
+  }
+
+  // Subsequent QRs: store the latest and ask before printing.
+  pendingQr = qr;
+  if (regenPromptActive) return; // prompt already shown; pendingQr will be used when answered
+
+  regenPromptActive = true;
+  promptRegen((confirmed) => {
+    regenPromptActive = false;
+    if (confirmed && pendingQr) {
+      qrcode.generate(pendingQr, { small: true });
+    }
+    pendingQr = null;
+  });
 });
 
 // Tracks whether the client is currently connected. Used by the heartbeat to
@@ -252,6 +347,7 @@ async function saveAllGroups() {
 
 client.on('ready', async () => {
   isReady = true;
+  await resolveQrMessage();
   // Snapshot the groups list once at startup — used for catch-up only.
   // Live message filtering re-reads groups.json each time, so /addgroup
   // and /removegroup take effect without a restart.
