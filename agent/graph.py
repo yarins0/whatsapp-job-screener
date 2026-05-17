@@ -397,7 +397,7 @@ def _notify_job(job: dict, job_id: int) -> None:
         lines = [f"New job: *{_md(title)}* @ {_md(company)} ({_md(loc)})"]
         if summary:
             lines.append(_md(summary[:200]))
-        lines.append(f"Contact: {contact}")
+        lines.append(f"Contact: {_md(contact)}")
 
         # Callback data is capped at 64 bytes by the Telegram API.
         role_kw = title.lower()[:40]
