@@ -359,7 +359,7 @@ def _notify_demo_users(job: dict) -> None:
         lines = [f"New job: *{_md(title)}* @ {_md(company)} ({_md(loc)})"]
         if summary:
             lines.append(_md(summary[:200]))
-        lines.append(f"Contact: {contact}")
+        lines.append(f"Contact: {_md(contact)}")
         text = "\n".join(lines)
 
         for chat_id in users:

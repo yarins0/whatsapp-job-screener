@@ -155,7 +155,7 @@ def test_help_mentions_buttons(temp_prefs):
 # /start and /commands
 # ---------------------------------------------------------------------------
 
-def test_start_shows_command_list(temp_prefs):
+def test_start_shows_command_list(temp_prefs, temp_demo_users):
     from telegram_bot import _handle_message
 
     with patch("telegram_bot._send") as mock_send:
@@ -169,7 +169,7 @@ def test_start_shows_command_list(temp_prefs):
     assert "/prefs" in first_reply
 
 
-def test_commands_shows_same_as_start(temp_prefs):
+def test_commands_shows_same_as_start(temp_prefs, temp_demo_users):
     from telegram_bot import _handle_message
 
     with patch("telegram_bot._send") as mock_send:

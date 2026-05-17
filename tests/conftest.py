@@ -67,6 +67,17 @@ def temp_prefs(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
+def temp_demo_users(tmp_path, monkeypatch):
+    """Point DEMO_USERS_PATH at an empty temp file so /start tests don't write to the real registry."""
+    import json
+
+    demo_file = tmp_path / "demo_users.json"
+    demo_file.write_text(json.dumps([]), encoding="utf-8")
+    monkeypatch.setenv("DEMO_USERS_PATH", str(demo_file))
+    return demo_file
+
+
+@pytest.fixture()
 def telegram_owner(monkeypatch):
     """Set TELEGRAM_CHAT_ID=42 so write commands pass the owner check.
 

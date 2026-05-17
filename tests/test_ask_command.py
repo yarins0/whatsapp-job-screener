@@ -116,11 +116,11 @@ class TestAskHandler:
         assert "remaining" not in reply
 
     def test_demo_user_sees_quota_note(self, temp_db):
-        import telegram_bot
+        import telegram_handlers.jobs as jobs_handler
         from telegram_bot import _handle_message
 
         # Start from a clean count for chat_id=99
-        telegram_bot._ask_counts.pop(99, None)
+        jobs_handler._ask_counts.pop(99, None)
 
         params_json = json.dumps({"days": 7, "role": None, "unseen_only": False, "limit": 10})
         fake = _fake_llm([params_json])
@@ -133,11 +133,12 @@ class TestAskHandler:
         assert "remaining" in reply
 
     def test_demo_user_blocked_after_limit(self, temp_db):
-        import telegram_bot
-        from telegram_bot import _ASK_DEMO_LIMIT, _handle_message
+        import telegram_handlers.jobs as jobs_handler
+        from telegram_handlers.start import _ASK_DEMO_LIMIT
+        from telegram_bot import _handle_message
 
         # Pre-fill the counter to the limit for chat_id=88
-        telegram_bot._ask_counts[88] = _ASK_DEMO_LIMIT
+        jobs_handler._ask_counts[88] = _ASK_DEMO_LIMIT
 
         with patch("telegram_bot._send") as mock_send:
             _handle_message(_make_msg("/ask python", chat_id=88))
@@ -148,10 +149,10 @@ class TestAskHandler:
         mock_send.assert_called_once()
 
     def test_demo_user_count_increments(self, temp_db):
-        import telegram_bot
+        import telegram_handlers.jobs as jobs_handler
         from telegram_bot import _handle_message
 
-        telegram_bot._ask_counts.pop(77, None)
+        jobs_handler._ask_counts.pop(77, None)
 
         params_json = json.dumps({"days": 7, "role": None, "unseen_only": False, "limit": 10})
         fake = _fake_llm([params_json])
@@ -160,4 +161,4 @@ class TestAskHandler:
              patch("agent.tools.ask_tool._default_llm", return_value=fake):
             _handle_message(_make_msg("/ask jobs", chat_id=77))
 
-        assert telegram_bot._ask_counts[77] == 1
+        assert jobs_handler._ask_counts[77] == 1
