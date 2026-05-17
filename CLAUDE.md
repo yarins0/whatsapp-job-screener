@@ -147,11 +147,24 @@ Config: `agent/web_sources.json` — `{scraper_key: {enabled: bool}}`.
 
 Run `python -m sources.web.scrapers.alljobs` to print live HTML of the first card and extracted fields — useful when AllJobs changes their markup.
 
-### Telegram bot: `telegram_bot.py`
+### Telegram bot: `telegram_bot.py` + `telegram_handlers/`
 
-Long-polls `getUpdates`. Handles inline-button callback queries (`block_role:`, `block_city:`) and text commands: `/help`, `/commands`, `/start`, `/prefs`, `/blockrole`, `/blockcity`, `/addrole`, `/listgroups`, `/groups`, `/addgroup`, `/removegroup`, `/tgsources`, `/addtgsource`, `/removetgsource`, `/jobs`, `/ask`, `/similar`, `/reindex`. All preference and group mutations delegate to `prefs_tool.py` and `groups_tool.py`. The `/jobs` command delegates to `query_tool.py`. The `/ask` command delegates to `ask_tool.ask_jobs()`. The `/similar` command delegates to `vector_store.find_similar()`. The `/reindex` command (owner-only) calls `vector_store.reindex_all()` to back-fill the ChromaDB index from SQLite history.
+`telegram_bot.py` is a thin dispatcher (~180 lines): `_api`, `_send`, `_is_owner`, `_answer_callback`, `_handle_message` (if/elif router), `_handle_callback`, `run_bot`. All command logic lives in the `telegram_handlers/` package:
 
-Access control: the owner is identified by `TELEGRAM_CHAT_ID`. Write/discovery commands (`/blockrole`, `/blockcity`, `/addrole`, `/listgroups`, `/addgroup`, `/removegroup`, `/addtgsource`, `/removetgsource`) are owner-only. Read commands (`/prefs`, `/groups`, `/tgsources`, `/jobs`, `/ask`) are available to all users, but `/ask` is rate-limited for non-owners via the module-level `_ask_counts` dict and `_ASK_DEMO_LIMIT` constant (default 3 per session).
+| Module | Commands |
+|---|---|
+| `start.py` | `/help`, `/start`, `/commands`; command list strings; `_ASK_DEMO_LIMIT` |
+| `jobs.py` | `/jobs`, `/ask`, `/similar`, `/reindex`, `/resend`; `_ask_counts` |
+| `prefs.py` | `/prefs`, `/blockrole`, `/blockcity`, `/addrole` |
+| `groups.py` | `/listgroups`, `/groups`, `/addgroup`, `/removegroup` |
+| `sources.py` | `/tgsources`, `/addtgsource`, `/removetgsource` |
+| `callbacks.py` | inline button handling (`block_role:`, `block_city:`) |
+
+Handler functions return `str | list[str]`; the dispatcher calls `_send` for each — tests patching `telegram_bot._send` work unchanged.
+
+Access control: the owner is identified by `TELEGRAM_CHAT_ID`. Write/discovery commands are owner-only. Read commands are available to all users, but `/ask` is rate-limited for non-owners via `_ask_counts` in `telegram_handlers/jobs.py` (`_ASK_DEMO_LIMIT` = 3 per session).
+
+**Demo users:** Non-owners who type `/start` are registered in `agent/demo_users.json` (gitignored) via `agent/tools/demo_users_tool.py`. They receive: (1) a clean read-only command list, (2) the last 5 stored jobs immediately, and (3) a plain-text notification for every job stored going forward (sent by `_notify_demo_users` in `agent/graph.py`).
 
 `/listgroups` reads `agent/all_whatsapp_groups.json` — a snapshot written by `listener.js` on every `ready` event. The file is gitignored. If it doesn't exist (listener has never connected), the bot tells the user to start the listener first. Watched groups are marked with ✓.
 
@@ -218,6 +231,7 @@ Initialize with `python -m db.init_db`. All tables use `CREATE TABLE IF NOT EXIS
 - `temp_chroma` — sets `CHROMA_DB_PATH` to `tmp_path/chroma`
 - `temp_prefs` — writes a minimal `prefs.json` to a temp file and sets `PREFS_PATH`
 - `temp_groups` — writes an empty map to a temp file and sets `GROUPS_PATH`
+- `temp_demo_users` — writes an empty list to a temp file and sets `DEMO_USERS_PATH` (isolates `/start` tests from the real registry)
 - `telegram_owner` — sets `TELEGRAM_CHAT_ID=42` so write commands pass `_is_owner`
 - `sample_messages` — loads `tests/sample_messages.json`
 
@@ -225,7 +239,8 @@ Key test patterns:
 - Pipeline tests pass scripted JSON to `FakeListChatModel`; separate mode needs two responses (classify, then extract); combined mode needs one.
 - To force combined mode in a pipeline test, insert a row into `group_stats` with `total_messages=100, job_post_messages=95`.
 - Stats tool tests use `monkeypatch.setenv("JOBS_DB_PATH", ...)` directly.
-- Telegram bot command tests patch `telegram_bot._send` to capture replies.
+- Telegram bot command tests patch `telegram_bot._send` to capture replies. Handler modules return strings and never call `_send` directly, so the patch reaches all commands.
+- `/ask` quota tests manipulate `telegram_handlers.jobs._ask_counts` directly (moved out of `telegram_bot` during refactor).
 - Query tool tests use `temp_db` and insert rows directly via `sqlite3`.
 - Ask tool tests inject `FakeListLLM` via the `llm` parameter.
 - Vector store tests use `temp_chroma` and inject `_FakeEmbeddingFunction`.
