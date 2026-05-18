@@ -30,6 +30,41 @@ const lastSeen = require('./last_seen');
 // Path is resolved relative to the project root (two levels up from this file).
 const GROUPS_FILE = path.join(__dirname, '..', '..', 'agent', 'whatsapp_sources.json');
 
+// --- session self-healing ---------------------------------------------------
+
+// After this many consecutive init failures the stale session is wiped so the
+// next restart can show a fresh QR code without manual intervention.
+const MAX_INIT_FAILURES = 3;
+
+// Stored outside the session dir so it survives the wipe.
+const AUTH_DIR = path.join(__dirname, '.wwebjs_auth');
+const SESSION_DIR = path.join(AUTH_DIR, 'session');
+const FAIL_COUNT_FILE = path.join(AUTH_DIR, '.fail_count');
+
+function readFailCount() {
+  try { return parseInt(fs.readFileSync(FAIL_COUNT_FILE, 'utf8'), 10) || 0; } catch (_) { return 0; }
+}
+
+function writeFailCount(n) {
+  try {
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
+    fs.writeFileSync(FAIL_COUNT_FILE, String(n));
+  } catch (_) {}
+}
+
+function resetFailCount() {
+  try { fs.unlinkSync(FAIL_COUNT_FILE); } catch (_) {}
+}
+
+function clearSession() {
+  try {
+    fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+    log('info', '[session] Stale session cleared — next restart will show a fresh QR code.');
+  } catch (err) {
+    log('warning', `[session] Could not clear session: ${err.message}`);
+  }
+}
+
 // groups.json is a map: { "id@g.us": "Display Name", ... }
 // An empty string means the name has not been resolved yet.
 function loadGroups() {
@@ -287,11 +322,10 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => {
-  sendQrToTelegram(qr); // always update Telegram silently
-
   if (!qrPrinted) {
-    // First QR — print immediately and start waiting for a scan.
+    // First QR — send to Telegram once, print to terminal, then wait for a scan.
     qrPrinted = true;
+    sendQrToTelegram(qr);
     log('info', 'Scan this QR code with WhatsApp:');
     qrcode.generate(qr, { small: true });
     return;
@@ -347,6 +381,7 @@ async function saveAllGroups() {
 
 client.on('ready', async () => {
   isReady = true;
+  resetFailCount(); // successful init — clear any accumulated failure count
   await resolveQrMessage();
   // Snapshot the groups list once at startup — used for catch-up only.
   // Live message filtering re-reads groups.json each time, so /addgroup
@@ -414,8 +449,19 @@ client.on('message', async (msg) => {
 // when WhatsApp Web navigates during Puppeteer script injection). Exiting with
 // code 1 lets start.py restart the listener automatically; it usually succeeds
 // on the next attempt.
+// After MAX_INIT_FAILURES consecutive failures the stale session is wiped so
+// the next restart prompts a fresh QR scan instead of looping forever.
 client.initialize().catch((err) => {
   log('error', `[init] initialize() failed — exiting for restart: ${err.message}`);
+  const failCount = readFailCount() + 1;
+  if (failCount >= MAX_INIT_FAILURES) {
+    log('warning', `[init] ${MAX_INIT_FAILURES} consecutive failures — clearing stale session.`);
+    clearSession();
+    resetFailCount();
+  } else {
+    writeFailCount(failCount);
+    log('info', `[init] Failure ${failCount}/${MAX_INIT_FAILURES} — will clear session on next failure.`);
+  }
   process.exit(1);
 });
 
