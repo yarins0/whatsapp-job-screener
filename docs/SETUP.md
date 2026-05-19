@@ -1,8 +1,30 @@
 # Setup Guide
 
-## Prerequisites
+## Quick Setup (recommended)
 
-- **Python 3.10+** and **Node.js 18+**
+If you have **Python 3.9+** and **Node.js** installed, the setup wizard handles everything else:
+
+```bash
+python setup.py
+```
+
+The wizard will:
+1. Check prerequisites (Python version, Node.js, npm)
+2. Walk you through creating `.env` with plain-English prompts
+3. Install Python and Node.js dependencies
+4. Initialize the database
+
+Once it finishes, jump straight to [Step 3 — Configure your job preferences](#step-3--configure-your-job-preferences).
+
+---
+
+## Manual Setup
+
+Follow the steps below if you prefer to configure things by hand, or if the wizard fails.
+
+### Prerequisites
+
+- **Python 3.9+** and **Node.js 18+**
 - A phone with WhatsApp installed (to scan the QR code on first run)
 - An API key for whichever LLM provider you choose (see [Choosing an LLM](#choosing-an-llm) below)
 - *(Optional)* A Telegram account for instant notifications and the daily digest
@@ -68,6 +90,13 @@ Only needed if you want to watch **Telegram channels** for job posts (in additio
 | `TELEGRAM_API_ID` | From [my.telegram.org](https://my.telegram.org) → API Development Tools → `api_id` |
 | `TELEGRAM_API_HASH` | Same page — `api_hash` |
 | `TELEGRAM_PHONE` | Your phone number, e.g. `+972501234567` |
+
+### Behaviour tuning (optional)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PROMPT_CACHE_TTL` | `off` | Anthropic only — cache TTL in seconds (e.g. `300`) or `off` to disable. Reduces API cost on repeated similar requests. |
+| `DUPLICATE_WINDOW_DAYS` | `7` | How many days back to check for the same title + company. Set `0` to disable duplicate detection. |
 
 ### Observability (optional)
 
@@ -140,6 +169,10 @@ Add the groups you want to watch to `agent/whatsapp_sources.json`:
 Display names are filled in automatically the next time the listener starts. You can also add and remove groups at any time using `/addgroup` and `/removegroup` in Telegram — live messages are forwarded immediately, catch-up on missed messages happens on the next restart.
 
 Press `Ctrl+C` to stop. Auth is saved to `sources/whatsapp/.wwebjs_auth/` — you won't need to scan the QR code again unless you delete that folder or log out.
+
+> **Session self-healing:** If the WhatsApp listener crashes 3 times in a row (e.g. because a saved session has expired), it automatically clears the stale session and shows a fresh QR code on the next restart. The QR code is also sent once to your Telegram chat so you can scan it remotely.
+
+> **QR in Telegram:** The QR code is sent to your Telegram chat once per login session. WhatsApp regenerates it every ~20 s, but only the terminal shows the updated code. If the first QR expires before you scan it, type `y` at the `QR expired — regen another?` prompt in the terminal.
 
 ---
 
