@@ -75,6 +75,8 @@ def handle_groups() -> str:
                 lines.append(f"  {display}  ({gid})")
             lines.append("")
             lines.append("Names refresh when the listener restarts.")
+            lines.append("Use /listgroups to see all groups and their IDs.")
+            lines.append("You can add more groups with /addgroup <group_id>.")
         else:
             lines = [
                 "No groups are being watched yet.",
