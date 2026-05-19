@@ -123,11 +123,12 @@ def check_prerequisites() -> None:
     print(f"  ✓  Python {v.major}.{v.minor}.{v.micro}")
 
     for tool, url in (("node", "https://nodejs.org/"), ("npm", "https://nodejs.org/")):
-        if not shutil.which(tool):
+        tool_path = shutil.which(tool)
+        if not tool_path:
             print(f"  ✗  '{tool}' is not installed.")
             print(f"     Download Node.js from: {url}")
             sys.exit(1)
-        result = subprocess.run([tool, "--version"], capture_output=True, text=True)
+        result = subprocess.run([tool_path, "--version"], capture_output=True, text=True)
         print(f"  ✓  {tool} {result.stdout.strip()}")
 
 
@@ -242,7 +243,9 @@ def install_python_deps(provider: str) -> None:
 
 def install_node_deps() -> None:
     _step(4, "Installing Node.js dependencies")
-    _run(["npm", "install"], "npm install")
+    # shutil.which resolves npm.cmd on Windows; subprocess needs the full path.
+    npm = shutil.which("npm") or "npm"
+    _run([npm, "install"], "npm install")
 
 
 def init_database() -> None:
