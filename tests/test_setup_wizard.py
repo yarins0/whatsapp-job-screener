@@ -5,6 +5,7 @@ All tests use mocked input() and subprocess.run — no real installs happen.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
@@ -352,3 +353,143 @@ class TestInitDatabase:
         fail = MagicMock(returncode=1, stdout="", stderr="error")
         with patch("subprocess.run", return_value=fail), pytest.raises(SystemExit):
             wizard.init_database()
+
+
+# ---------------------------------------------------------------------------
+# configure_prefs
+# ---------------------------------------------------------------------------
+
+class TestConfigurePrefs:
+    def _run(self, prefs_path, inputs):
+        with patch.object(wizard, "PREFS_PATH", prefs_path), \
+             patch("builtins.input", side_effect=inputs):
+            wizard.configure_prefs()
+
+    # Fresh install (no existing prefs file).
+    # Input order: roles (_ask), blocklist (raw input), location_blocklist (raw input).
+
+    def test_fresh_writes_given_roles(self, tmp_path):
+        prefs_path = tmp_path / "prefs.json"
+        self._run(prefs_path, ["python, backend", "", ""])
+        assert json.loads(prefs_path.read_text())["roles"] == ["python", "backend"]
+
+    def test_fresh_empty_blocklist_keeps_default(self, tmp_path):
+        prefs_path = tmp_path / "prefs.json"
+        self._run(prefs_path, ["python", "", ""])
+        assert json.loads(prefs_path.read_text())["blocklist"] == [
+            "unpaid", "volunteer", "senior", "sales", "qa"
+        ]
+
+    def test_fresh_custom_blocklist(self, tmp_path):
+        prefs_path = tmp_path / "prefs.json"
+        self._run(prefs_path, ["python", "senior, unpaid", ""])
+        assert json.loads(prefs_path.read_text())["blocklist"] == ["senior", "unpaid"]
+
+    def test_fresh_location_blocklist_parsed(self, tmp_path):
+        prefs_path = tmp_path / "prefs.json"
+        self._run(prefs_path, ["python", "", "Jerusalem, Haifa"])
+        assert json.loads(prefs_path.read_text())["location_blocklist"] == ["Jerusalem", "Haifa"]
+
+    def test_fresh_min_salary_is_null(self, tmp_path):
+        prefs_path = tmp_path / "prefs.json"
+        self._run(prefs_path, ["python", "", ""])
+        assert json.loads(prefs_path.read_text())["min_salary"] is None
+
+    # Existing file — skip.
+    # Input order: reconfigure_yn (_ask_yn).
+
+    def test_skip_reconfigure_leaves_file_unchanged(self, tmp_path):
+        prefs_path = tmp_path / "prefs.json"
+        original = {"roles": ["go"], "blocklist": [], "location_blocklist": [], "min_salary": None}
+        prefs_path.write_text(json.dumps(original), encoding="utf-8")
+        self._run(prefs_path, ["n"])
+        assert json.loads(prefs_path.read_text())["roles"] == ["go"]
+
+    # Existing file — reconfigure.
+    # Input order: reconfigure_yn, roles, blocklist, location_blocklist.
+
+    def test_reconfigure_overwrites_roles(self, tmp_path):
+        prefs_path = tmp_path / "prefs.json"
+        prefs_path.write_text(
+            json.dumps({"roles": ["old"], "blocklist": [], "location_blocklist": [], "min_salary": None}),
+            encoding="utf-8",
+        )
+        self._run(prefs_path, ["y", "rust, go", "", ""])
+        assert json.loads(prefs_path.read_text())["roles"] == ["rust", "go"]
+
+    def test_reconfigure_empty_blocklist_keeps_existing(self, tmp_path):
+        prefs_path = tmp_path / "prefs.json"
+        prefs_path.write_text(
+            json.dumps({"roles": ["x"], "blocklist": ["qa"], "location_blocklist": [], "min_salary": None}),
+            encoding="utf-8",
+        )
+        self._run(prefs_path, ["y", "python", "", ""])
+        assert json.loads(prefs_path.read_text())["blocklist"] == ["qa"]
+
+    def test_min_salary_preserved_from_existing(self, tmp_path):
+        prefs_path = tmp_path / "prefs.json"
+        prefs_path.write_text(
+            json.dumps({"roles": ["x"], "blocklist": [], "location_blocklist": [], "min_salary": 5000}),
+            encoding="utf-8",
+        )
+        self._run(prefs_path, ["y", "python", "", ""])
+        assert json.loads(prefs_path.read_text())["min_salary"] == 5000
+
+    def test_invalid_json_warns_and_uses_defaults(self, tmp_path, capsys):
+        prefs_path = tmp_path / "prefs.json"
+        prefs_path.write_text("not json!", encoding="utf-8")
+        self._run(prefs_path, ["y", "python", "", ""])
+        assert "invalid" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# authenticate_telegram_source
+# ---------------------------------------------------------------------------
+
+class TestAuthenticateTelegramSource:
+    _TG_ENV = {
+        "TELEGRAM_API_ID": "123",
+        "TELEGRAM_API_HASH": "abc",
+        "TELEGRAM_PHONE": "+972501234567",
+    }
+
+    def test_skips_when_no_telegram_source_vars(self, capsys):
+        with patch.object(wizard, "_load_dotenv", return_value={}):
+            wizard.authenticate_telegram_source()
+        assert "not configured" in capsys.readouterr().out
+
+    def test_skips_when_only_partial_vars(self, capsys):
+        partial = {"TELEGRAM_API_ID": "123", "TELEGRAM_API_HASH": "abc"}
+        with patch.object(wizard, "_load_dotenv", return_value=partial):
+            wizard.authenticate_telegram_source()
+        assert "not configured" in capsys.readouterr().out
+
+    def test_user_declines_no_subprocess(self):
+        with patch.object(wizard, "_load_dotenv", return_value=self._TG_ENV), \
+             patch("builtins.input", return_value="n"), \
+             patch("subprocess.run") as mock_run:
+            wizard.authenticate_telegram_source()
+        mock_run.assert_not_called()
+
+    def test_user_declines_prints_manual_instruction(self, capsys):
+        with patch.object(wizard, "_load_dotenv", return_value=self._TG_ENV), \
+             patch("builtins.input", return_value="n"):
+            wizard.authenticate_telegram_source()
+        assert "manually" in capsys.readouterr().out
+
+    def test_user_accepts_runs_listener(self):
+        ok = MagicMock(returncode=0)
+        with patch.object(wizard, "_load_dotenv", return_value=self._TG_ENV), \
+             patch("builtins.input", return_value="y"), \
+             patch("subprocess.run", return_value=ok) as mock_run:
+            wizard.authenticate_telegram_source()
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert "-m" in cmd
+        assert cmd[-1] == "sources.telegram.listener"
+
+    def test_keyboard_interrupt_from_subprocess_is_swallowed(self):
+        with patch.object(wizard, "_load_dotenv", return_value=self._TG_ENV), \
+             patch("builtins.input", return_value="y"), \
+             patch("subprocess.run", side_effect=KeyboardInterrupt):
+            wizard.authenticate_telegram_source()  # must not raise

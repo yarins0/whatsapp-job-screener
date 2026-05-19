@@ -8,12 +8,14 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 DOTENV_PATH = Path(".env")
+PREFS_PATH = Path("agent/prefs.json")
 
 _PROVIDER_EXTRA_PACKAGES: dict[str, str] = {
     "openai": "langchain-openai>=0.2.0",
@@ -288,15 +290,127 @@ def init_database() -> None:
     print(f"  ✓  {result.stdout.strip()}")
 
 
+def configure_prefs() -> None:
+    _step(6, "Configuring job preferences  (agent/prefs.json)")
+
+    existing: dict = {}
+    if PREFS_PATH.exists():
+        try:
+            existing = json.loads(PREFS_PATH.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            print("  Warning: existing prefs.json is invalid — using defaults.")
+
+    defaults: dict = {
+        "roles": ["backend", "python", "node", "fullstack", "junior"],
+        "blocklist": ["unpaid", "volunteer", "senior", "sales", "qa"],
+        "location_blocklist": [],
+        "min_salary": None,
+    }
+    prefs: dict = {**defaults, **existing}
+
+    print("  These preferences control which jobs the agent keeps.")
+    print()
+    if PREFS_PATH.exists():
+        print(f"  roles:              {', '.join(prefs.get('roles', []))}")
+        print(f"  blocklist:          {', '.join(prefs.get('blocklist', []))}")
+        loc = prefs.get("location_blocklist", [])
+        print(f"  location_blocklist: {', '.join(loc) if loc else '(none)'}")
+        print()
+        if not _ask_yn("  Reconfigure preferences?", default_yes=False):
+            print("  Skipping — keeping your existing preferences.")
+            return
+
+    print()
+    print("  Enter keywords as comma-separated lists.")
+    print()
+
+    roles_default = ", ".join(prefs.get("roles", []))
+    roles_raw = _ask("Roles to keep (match in title or summary)", default=roles_default)
+    roles = [r.strip() for r in roles_raw.split(",") if r.strip()]
+
+    blocklist_default = ", ".join(prefs.get("blocklist", []))
+    bl_hint = f" [{blocklist_default}]" if blocklist_default else " [none]"
+    blocklist_raw = input(f"  Blocklist (auto-reject these keywords){bl_hint}: ").strip()
+    blocklist = (
+        [b.strip() for b in blocklist_raw.split(",") if b.strip()]
+        if blocklist_raw
+        else prefs.get("blocklist", [])
+    )
+
+    loc_default = ", ".join(prefs.get("location_blocklist", []))
+    loc_hint = f" [{loc_default}]" if loc_default else " [none]"
+    loc_raw = input(f"  Location blocklist (cities to skip){loc_hint}: ").strip()
+    loc_blocklist = (
+        [c.strip() for c in loc_raw.split(",") if c.strip()]
+        if loc_raw
+        else prefs.get("location_blocklist", [])
+    )
+
+    new_prefs = {
+        "roles": roles,
+        "blocklist": blocklist,
+        "location_blocklist": loc_blocklist,
+        "min_salary": prefs.get("min_salary"),
+    }
+
+    PREFS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PREFS_PATH.write_text(
+        json.dumps(new_prefs, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    print()
+    print(f"  ✓  Saved to {PREFS_PATH}")
+
+
+def authenticate_telegram_source() -> None:
+    _step(7, "Authenticating Telegram source listener")
+
+    env = _load_dotenv()
+    if not all(env.get(k) for k in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_PHONE")):
+        print("  Telegram source not configured — skipping.")
+        print("  (Set TELEGRAM_API_ID, TELEGRAM_API_HASH, and TELEGRAM_PHONE in .env to enable.)")
+        return
+
+    print("  The Telegram source listener needs to log in once.")
+    print("  It will send a verification code to your Telegram account.")
+    print("  Once you see 'Telegram source listener started', press Ctrl+C to continue setup.")
+    print()
+    if not _ask_yn("  Authenticate now?", default_yes=True):
+        print()
+        print("  Skipping — run this manually before starting the agent:")
+        print("    python -m sources.telegram.listener")
+        return
+
+    print()
+    print("  Starting listener for authentication (press Ctrl+C after login succeeds)...")
+    print()
+    try:
+        subprocess.run([sys.executable, "-m", "sources.telegram.listener"])
+    except KeyboardInterrupt:
+        pass
+
+    print()
+    print("  ✓  Telegram source authentication complete.")
+
+
 def _done() -> None:
     print()
     print("=" * 58)
     print("  Setup complete!")
     print()
-    print("  Next steps:")
-    print("  1. Start the agent:    python start.py")
-    print("  2. Connect WhatsApp:   scan the QR code that appears")
-    print("  3. Add job groups:     use /addgroup in your Telegram bot")
+    print("  The wizard handled SETUP.md steps 1–5.")
+    print("  One step remains:")
+    print()
+    print("  Step 6 — Start the agent:")
+    print("    Windows:  double-click  Start Job Screener.bat")
+    print("    Any OS:   python start.py")
+    print()
+    print("  On first run, scan the QR code with WhatsApp")
+    print("  (Settings → Linked Devices → Link a Device).")
+    print("  Your groups are listed in the terminal — use")
+    print("  /addgroup <id> in Telegram to start watching them.")
+    print()
+    print("  This is also the command you run every future session.")
     print()
     print("  Run  python setup.py  again at any time to reconfigure.")
     print("=" * 58)
@@ -314,6 +428,8 @@ def main() -> None:
     install_python_deps(provider)
     install_node_deps()
     init_database()
+    configure_prefs()
+    authenticate_telegram_source()
     _done()
 
 

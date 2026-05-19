@@ -13,8 +13,10 @@ The wizard will:
 2. Walk you through creating `.env` with plain-English prompts
 3. Install Python and Node.js dependencies
 4. Initialize the database
+5. Configure your job preferences (`agent/prefs.json`)
+6. Authenticate the Telegram source listener (if configured)
 
-Once it finishes, jump straight to [Step 3 — Configure your job preferences](#step-3--configure-your-job-preferences).
+Once it finishes, jump straight to [Step 6 — Start the agent](#step-6--start-the-agent).
 
 ---
 
@@ -112,6 +114,8 @@ LangSmith gives you a trace of every LLM call — useful for debugging why a mes
 
 ## Step 3 — Configure your job preferences
 
+> **Handled by the wizard.** If you ran `python setup.py`, this step is already done. Skip to [Step 6](#step-6--start-the-agent).
+
 Open `agent/prefs.json` and edit it to match what you're looking for:
 
 ```json
@@ -140,51 +144,9 @@ You can also update preferences live via Telegram once the bot is running — no
 
 ---
 
-## Step 4 — Discover your WhatsApp group IDs
+## Step 4 — Authenticate the Telegram source listener (first run only)
 
-Leave `agent/whatsapp_sources.json` as an empty object `{}` and run:
-
-```bash
-python start.py
-```
-
-A QR code will appear in the terminal. **Scan it with WhatsApp** (Settings → Linked Devices → Link a Device). Once connected, the listener prints all your groups:
-
-```
-  120363XXXXXXXXXX@g.us  —  Tech Jobs TLV
-  120363YYYYYYYYYY@g.us  —  Junior Dev Positions
-```
-
-> **Tip:** Once the QR code is scanned and the listener connects, `agent/all_whatsapp_groups.json` is written automatically with all your groups. If you configured Telegram in Step 2, send `/listgroups` to your bot to see the same list with watched groups marked ✓. You can also use `/addgroup <id>` and `/removegroup <id>` any time later to add or remove groups without editing the file.
-
-Add the groups you want to watch to `agent/whatsapp_sources.json`:
-
-```json
-{
-  "120363XXXXXXXXXX@g.us": "",
-  "120363YYYYYYYYYY@g.us": ""
-}
-```
-
-Display names are filled in automatically the next time the listener starts. You can also add and remove groups at any time using `/addgroup` and `/removegroup` in Telegram — live messages are forwarded immediately, catch-up on missed messages happens on the next restart.
-
-Press `Ctrl+C` to stop. Auth is saved to `sources/whatsapp/.wwebjs_auth/` — you won't need to scan the QR code again unless you delete that folder or log out.
-
-> **Session self-healing:** If the WhatsApp listener crashes 3 times in a row (e.g. because a saved session has expired), it automatically clears the stale session and shows a fresh QR code on the next restart. The QR code is also sent once to your Telegram chat so you can scan it remotely.
-
-> **QR in Telegram:** The QR code is sent to your Telegram chat once per login session. WhatsApp regenerates it every ~20 s, but only the terminal shows the updated code. If the first QR expires before you scan it, type `y` at the `QR expired — regen another?` prompt in the terminal.
-
----
-
-## Step 5 — Initialize the database
-
-```bash
-python -m db.init_db
-```
-
----
-
-## Step 6 — Authenticate the Telegram source listener (first run only)
+> **Handled by the wizard.** If you ran `python setup.py` and configured `TELEGRAM_API_ID/HASH/PHONE`, the wizard ran this for you. Skip to [Step 6](#step-6--start-the-agent).
 
 > Skip this step if you are not using the Telegram source (`TELEGRAM_API_ID/HASH/PHONE` not set).
 
@@ -198,8 +160,18 @@ Enter the code sent to your Telegram account when prompted. Once you see `Telegr
 
 ---
 
-## Step 7 — Start the agent
-### This is the only step you will have to repeat
+## Step 5 — Initialize the database
+
+> **Handled by the wizard.** If you ran `python setup.py`, this step is already done. Skip to [Step 6](#step-6--start-the-agent).
+
+```bash
+python -m db.init_db
+```
+
+---
+
+## Step 6 — Start the agent
+### The only step you repeat each session — first run also connects WhatsApp and finishes setup
 
 **Windows** — double-click `Start Job Screener.bat` (or create a desktop shortcut to it).
 
@@ -216,6 +188,32 @@ bash start.sh
 ```bash
 python start.py
 ```
+
+**First run — connecting WhatsApp:** A QR code will appear in the terminal. **Scan it with WhatsApp** (Settings → Linked Devices → Link a Device). Once connected, the listener prints all your groups:
+
+```
+  120363XXXXXXXXXX@g.us  —  Tech Jobs TLV
+  120363YYYYYYYYYY@g.us  —  Junior Dev Positions
+```
+
+> **Tip:** `agent/all_whatsapp_groups.json` is written automatically with all your groups. If you configured Telegram in Step 2, send `/listgroups` to your bot to see the same list with watched groups marked ✓.
+
+Add the groups you want to watch — use `/addgroup <id>` in Telegram or edit `agent/whatsapp_sources.json` directly:
+
+```json
+{
+  "120363XXXXXXXXXX@g.us": "",
+  "120363YYYYYYYYYY@g.us": ""
+}
+```
+
+Display names are filled in automatically. You can add and remove groups at any time with `/addgroup` and `/removegroup` — live messages are forwarded immediately, catch-up on missed messages happens on the next restart.
+
+Auth is saved to `sources/whatsapp/.wwebjs_auth/` — you won't need to scan the QR code again unless you delete that folder or log out.
+
+> **Session self-healing:** If the WhatsApp listener crashes 3 times in a row (e.g. because a saved session has expired), it automatically clears the stale session and shows a fresh QR code on the next restart. The QR code is also sent once to your Telegram chat so you can scan it remotely.
+
+> **QR in Telegram:** The QR code is sent to your Telegram chat once per login session. WhatsApp regenerates it every ~20 s, but only the terminal shows the updated code. If the first QR expires before you scan it, type `y` at the `QR expired — regen another?` prompt in the terminal.
 
 Six processes start together and log to the same terminal:
 
