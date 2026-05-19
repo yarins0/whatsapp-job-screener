@@ -8,7 +8,6 @@ Usage:
 
 from __future__ import annotations
 
-import getpass
 import shutil
 import subprocess
 import sys
@@ -64,24 +63,11 @@ def _ask(prompt: str, default: str | None = None, secret: bool = False) -> str:
     hint = f" [{default}]" if default else ""
     full_prompt = f"  {prompt}{hint}: "
     while True:
-        if secret:
-            try:
-                value = getpass.getpass(full_prompt).strip()
-                if not value and default:
-                    return default
-                if value:
-                    return value
-            except (getpass.GetPassWarning, Exception):
-                # getpass doesn't work in all Windows terminals — fall back to input().
-                print("  (warning: input will be visible in this terminal)")
-                secret = False
-                continue
-        else:
-            value = input(full_prompt).strip()
-            if not value and default:
-                return default
-            if value:
-                return value
+        value = input(full_prompt).strip()
+        if not value and default:
+            return default
+        if value:
+            return value
         print("  (required - please enter a value)")
 
 
