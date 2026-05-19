@@ -1,5 +1,6 @@
 # Secrets
 .env
+.env.backup
 
 # Python
 __pycache__/
@@ -36,7 +37,10 @@ db/chroma/
 
 # Claude Code
 .claude/
+.claude-flow/
 .gstack/
+.planning/
+.mcp*
 
 # WhatsApp group snapshot — written by listener.js on connect, read by /listgroups
 agent/all_whatsapp_groups.json
@@ -46,3 +50,4 @@ agent/demo_users.json
 
 # Local notes
 TODO.md
+HANDOFF.md

@@ -8,13 +8,12 @@
     "software engineer",
     "software developer",
     "software Programmer",
+    "developer",
+    "engineer",
     "python",
+    "java",
     "node.js",
-    "nodejs",
-    "react",
-    "junior",
-    "junior developer",
-    "junior engineer"
+    "nodejs"
   ],
   "blocklist": [
     "unpaid",
@@ -30,10 +29,10 @@
     "electrical",
     "רואה חשבון",
     "data entry & operations associate",
-    "project manager",
-    "product manager",
+    "manager",
     "data engineer",
-    "data analyst"
+    "data analyst",
+    "verification engineer"
   ],
   "location_blocklist": [
     "Jerusalem",
@@ -41,7 +40,8 @@
     "Yokneam",
     "Kiryat Shmona",
     "North Israel",
-    "Kiryat Motzkin"
+    "Kiryat Motzkin",
+    "ירושלים"
   ],
   "min_salary": null
 }
