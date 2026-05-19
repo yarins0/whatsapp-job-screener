@@ -65,6 +65,20 @@ function clearSession() {
   }
 }
 
+// Called from both startup and reconnect failure paths so the counter covers
+// all cases where initialize() fails, not just the initial launch.
+function recordInitFailure() {
+  const failCount = readFailCount() + 1;
+  if (failCount >= MAX_INIT_FAILURES) {
+    log('warning', `[init] ${MAX_INIT_FAILURES} consecutive failures — clearing stale session.`);
+    clearSession();
+    resetFailCount();
+  } else {
+    writeFailCount(failCount);
+    log('info', `[init] Failure ${failCount}/${MAX_INIT_FAILURES} — will clear session on next failure.`);
+  }
+}
+
 // groups.json is a map: { "id@g.us": "Display Name", ... }
 // An empty string means the name has not been resolved yet.
 function loadGroups() {
@@ -152,6 +166,7 @@ async function reconnect() {
     // When Node exits, the OS kills Chrome as its child process, releasing the
     // lock. start.py will restart this listener process automatically.
     log('error', `[reconnect] initialize() failed — exiting for restart: ${err.message}`);
+    recordInitFailure();
     process.exit(1);
   }
 }
@@ -453,15 +468,7 @@ client.on('message', async (msg) => {
 // the next restart prompts a fresh QR scan instead of looping forever.
 client.initialize().catch((err) => {
   log('error', `[init] initialize() failed — exiting for restart: ${err.message}`);
-  const failCount = readFailCount() + 1;
-  if (failCount >= MAX_INIT_FAILURES) {
-    log('warning', `[init] ${MAX_INIT_FAILURES} consecutive failures — clearing stale session.`);
-    clearSession();
-    resetFailCount();
-  } else {
-    writeFailCount(failCount);
-    log('info', `[init] Failure ${failCount}/${MAX_INIT_FAILURES} — will clear session on next failure.`);
-  }
+  recordInitFailure();
   process.exit(1);
 });
 

@@ -9,7 +9,6 @@ Usage:
 from __future__ import annotations
 
 import getpass
-import os
 import shutil
 import subprocess
 import sys
@@ -30,7 +29,7 @@ _PROVIDER_KEY_ENV: dict[str, str] = {
 }
 
 _PROVIDER_KEY_HINTS: dict[str, str] = {
-    "anthropic": "Get yours at: https://console.anthropic.com/  →  API Keys",
+    "anthropic": "Get yours at: https://console.anthropic.com/  ->  API Keys",
     "openai": "Get yours at: https://platform.openai.com/api-keys",
     "google": "Get yours at: https://aistudio.google.com/app/apikey",
 }
@@ -94,7 +93,7 @@ def _load_dotenv() -> dict[str, str]:
 
 
 def _run(cmd: list[str], label: str) -> None:
-    print(f"  Running: {' '.join(cmd)}")
+    print(f"  Running: {label}...")
     result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         # Show the tail of output so the user can see what went wrong.
@@ -204,7 +203,7 @@ def configure_env() -> str:
     if _ask_yn("Set up Telegram channel source?", default_yes=False):
         print()
         print("  Get API ID and API hash from:")
-        print("    https://my.telegram.org  →  API Development Tools")
+        print("    https://my.telegram.org  ->  API Development Tools")
         print()
         api_id = _ask("Telegram API ID", default=existing.get("TELEGRAM_API_ID"))
         api_hash = _ask("Telegram API hash", default=existing.get("TELEGRAM_API_HASH"), secret=True)
