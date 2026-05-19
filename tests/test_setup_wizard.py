@@ -133,11 +133,17 @@ class TestConfigureEnv:
              patch("builtins.input", side_effect=inputs):
             return wizard.configure_env()
 
+    # Actual prompt order (what the wizard asks):
+    # Anthropic:     provider, api_key, bot_token, chat_id, cache_ttl, dup_days, tg_source_yn
+    # Other LLMs:    provider, api_key, bot_token, chat_id, dup_days,  tg_source_yn
+    # Ollama:        provider, bot_token, chat_id, dup_days, tg_source_yn
+    # With tg_source: ..., tg_source_yn=y, api_id, api_hash, phone
+
     # --- fresh install (no existing .env) ---
 
     def test_fresh_anthropic(self, tmp_path):
         env_path = tmp_path / ".env"
-        provider = self._run(env_path, ["1", "sk-ant-key", "bot:token", "12345", "n"])
+        provider = self._run(env_path, ["1", "sk-ant-key", "bot:token", "12345", "300", "7", "n"])
         assert provider == "anthropic"
         content = env_path.read_text()
         assert "LLM_PROVIDER=anthropic" in content
@@ -147,7 +153,7 @@ class TestConfigureEnv:
 
     def test_fresh_openai(self, tmp_path):
         env_path = tmp_path / ".env"
-        provider = self._run(env_path, ["2", "sk-openai-key", "bot:token", "12345", "n"])
+        provider = self._run(env_path, ["2", "sk-openai-key", "bot:token", "12345", "7", "n"])
         assert provider == "openai"
         content = env_path.read_text()
         assert "LLM_PROVIDER=openai" in content
@@ -155,14 +161,13 @@ class TestConfigureEnv:
 
     def test_fresh_google(self, tmp_path):
         env_path = tmp_path / ".env"
-        provider = self._run(env_path, ["3", "goog-key", "bot:token", "12345", "n"])
+        provider = self._run(env_path, ["3", "goog-key", "bot:token", "12345", "7", "n"])
         assert provider == "google"
         assert "GOOGLE_API_KEY=goog-key" in env_path.read_text()
 
     def test_fresh_ollama_no_api_key_prompt(self, tmp_path):
         env_path = tmp_path / ".env"
-        # Ollama has no API key — only 3 inputs: provider, bot token, chat id, no-tg-source
-        provider = self._run(env_path, ["4", "bot:token", "12345", "n"])
+        provider = self._run(env_path, ["4", "bot:token", "12345", "7", "n"])
         assert provider == "ollama"
         content = env_path.read_text()
         assert "LLM_PROVIDER=ollama" in content
@@ -170,17 +175,51 @@ class TestConfigureEnv:
 
     def test_invalid_provider_choice_reprompts(self, tmp_path, capsys):
         env_path = tmp_path / ".env"
-        self._run(env_path, ["9", "0", "1", "sk-ant", "bot:token", "12345", "n"])
+        self._run(env_path, ["9", "0", "1", "sk-ant", "bot:token", "12345", "off", "7", "n"])
         assert "1 and 4" in capsys.readouterr().out
 
     def test_with_telegram_source(self, tmp_path):
         env_path = tmp_path / ".env"
-        inputs = ["1", "sk-ant", "bot:token", "12345", "y", "98765", "hash123", "+972501234567"]
+        inputs = ["1", "sk-ant", "bot:token", "12345", "off", "7", "y", "98765", "hash123", "+972501234567"]
         self._run(env_path, inputs)
         content = env_path.read_text()
         assert "TELEGRAM_API_ID=98765" in content
         assert "TELEGRAM_API_HASH=hash123" in content
         assert "TELEGRAM_PHONE=+972501234567" in content
+
+    # --- new fields ---
+
+    def test_anthropic_writes_prompt_cache_ttl(self, tmp_path):
+        env_path = tmp_path / ".env"
+        self._run(env_path, ["1", "sk-ant", "bot:token", "12345", "300", "7", "n"])
+        assert "PROMPT_CACHE_TTL=300" in env_path.read_text()
+
+    def test_anthropic_cache_ttl_default_is_off(self, tmp_path):
+        env_path = tmp_path / ".env"
+        self._run(env_path, ["1", "sk-ant", "bot:token", "12345", "", "7", "n"])
+        assert "PROMPT_CACHE_TTL=off" in env_path.read_text()
+
+    def test_non_anthropic_has_no_cache_ttl(self, tmp_path):
+        env_path = tmp_path / ".env"
+        self._run(env_path, ["2", "sk-openai", "bot:token", "12345", "7", "n"])
+        assert "PROMPT_CACHE_TTL" not in env_path.read_text()
+
+    def test_duplicate_window_days_written_for_all_providers(self, tmp_path):
+        cases = [
+            ("1", ["sk-ant", "bot:token", "12345", "off", "14"]),
+            ("2", ["sk-openai", "bot:token", "12345", "14"]),
+            ("3", ["goog-key", "bot:token", "12345", "14"]),
+            ("4", ["bot:token", "12345", "14"]),
+        ]
+        for provider_num, fields in cases:
+            env_path = tmp_path / f".env{provider_num}"
+            self._run(env_path, [provider_num] + fields + ["n"])
+            assert "DUPLICATE_WINDOW_DAYS=14" in env_path.read_text()
+
+    def test_duplicate_window_days_default_is_7(self, tmp_path):
+        env_path = tmp_path / ".env"
+        self._run(env_path, ["1", "sk-ant", "bot:token", "12345", "off", "", "n"])
+        assert "DUPLICATE_WINDOW_DAYS=7" in env_path.read_text()
 
     # --- existing .env ---
 
@@ -194,18 +233,21 @@ class TestConfigureEnv:
     def test_reconfigure_overwrites_keys(self, tmp_path):
         env_path = tmp_path / ".env"
         env_path.write_text("LLM_PROVIDER=openai\nOPENAI_API_KEY=old-key\n", encoding="utf-8")
-        self._run(env_path, ["y", "1", "sk-ant-new", "bot:token", "12345", "n"])
+        self._run(env_path, ["y", "1", "sk-ant-new", "bot:token", "12345", "off", "7", "n"])
         content = env_path.read_text()
         assert "ANTHROPIC_API_KEY=sk-ant-new" in content
         assert "old-key" not in content
 
     def test_preserves_unknown_fields_on_reconfigure(self, tmp_path):
         env_path = tmp_path / ".env"
+        # LANGSMITH_API_KEY is unknown to wizard — must survive reconfigure.
+        # DUPLICATE_WINDOW_DAYS is now a wizard key — prompted with existing as default.
         env_path.write_text(
             "LLM_PROVIDER=anthropic\nLANGSMITH_API_KEY=ls-key\nDUPLICATE_WINDOW_DAYS=14\n",
             encoding="utf-8",
         )
-        self._run(env_path, ["y", "1", "sk-ant", "bot:token", "12345", "n"])
+        # Empty input for dup_days -> uses existing value 14 as default
+        self._run(env_path, ["y", "1", "sk-ant", "bot:token", "12345", "off", "", "n"])
         content = env_path.read_text()
         assert "LANGSMITH_API_KEY=ls-key" in content
         assert "DUPLICATE_WINDOW_DAYS=14" in content
@@ -213,8 +255,8 @@ class TestConfigureEnv:
     def test_existing_value_used_as_default_on_empty_input(self, tmp_path):
         env_path = tmp_path / ".env"
         env_path.write_text("LLM_PROVIDER=anthropic\nTELEGRAM_CHAT_ID=99999\n", encoding="utf-8")
-        # Press Enter (empty) for TELEGRAM_CHAT_ID -> should keep 99999
-        self._run(env_path, ["y", "1", "sk-ant", "bot:token", "", "n"])
+        # Press Enter for TELEGRAM_CHAT_ID -> keeps 99999
+        self._run(env_path, ["y", "1", "sk-ant", "bot:token", "", "off", "7", "n"])
         assert "TELEGRAM_CHAT_ID=99999" in env_path.read_text()
 
     def test_skip_reconfigure_defaults_to_anthropic_when_no_provider_in_env(self, tmp_path):

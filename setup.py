@@ -39,6 +39,7 @@ _WIZARD_KEYS = {
     "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY",
     "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
     "TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_PHONE",
+    "PROMPT_CACHE_TTL", "DUPLICATE_WINDOW_DAYS",
 }
 
 
@@ -193,6 +194,25 @@ def configure_env() -> str:
     print()
     chat_id = _ask("Your Telegram chat ID", default=existing.get("TELEGRAM_CHAT_ID"))
     wizard_lines.append(f"TELEGRAM_CHAT_ID={chat_id}")
+
+    # --- Anthropic prompt cache (only relevant for Anthropic) ----------------
+    if provider == "anthropic":
+        print()
+        print("  -- Prompt Cache --")
+        print("  Caching speeds up repeated requests and reduces API costs.")
+        print("  Enter a number of seconds (e.g. 300) or 'off' to disable.")
+        print()
+        cache_ttl = _ask("PROMPT_CACHE_TTL", default=existing.get("PROMPT_CACHE_TTL", "off"))
+        wizard_lines.append(f"PROMPT_CACHE_TTL={cache_ttl}")
+
+    # --- Duplicate window ----------------------------------------------------
+    print()
+    print("  -- Duplicate Detection --")
+    print("  How many days back to check for the same job title + company.")
+    print("  Enter 0 to disable duplicate checking.")
+    print()
+    dup_days = _ask("DUPLICATE_WINDOW_DAYS", default=existing.get("DUPLICATE_WINDOW_DAYS", "7"))
+    wizard_lines.append(f"DUPLICATE_WINDOW_DAYS={dup_days}")
 
     # --- Telegram source (optional) ------------------------------------------
     print()
