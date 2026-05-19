@@ -26,6 +26,7 @@ Graph topology:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from langgraph.graph import END, START, StateGraph
@@ -42,6 +43,17 @@ from agent.tools.store_tool import store_job
 logger = logging.getLogger(__name__)
 
 CONFIDENCE_THRESHOLD = 0.6
+
+# Serialise all Anthropic API calls so catch-up bursts don't flood the API
+# and trigger 529 overloaded errors. Created lazily inside the event loop.
+_api_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_api_semaphore() -> asyncio.Semaphore:
+    global _api_semaphore
+    if _api_semaphore is None:
+        _api_semaphore = asyncio.Semaphore(1)
+    return _api_semaphore
 
 
 # ---------------------------------------------------------------------------
@@ -114,22 +126,25 @@ async def route(state: PipelineState) -> dict:
     sender: str = message.get("sender") or ""
 
     if sender == "web-scraper":
-        jobs = await extract_job(text)
+        async with _get_api_semaphore():
+            jobs = await extract_job(text)
         return _make_route_result(True, 1.0, jobs, "web-scraper", group)
 
     mode = get_pipeline_mode(group)
 
     if mode == "combined":
         try:
-            combined = await classify_and_extract(text)
+            async with _get_api_semaphore():
+                combined = await classify_and_extract(text)
             is_job: bool = combined.get("is_job_post", False)
             confidence: float = float(combined.get("confidence", 0.0))
             return _make_route_result(is_job, confidence, combined.get("jobs") or [], "combined", group)
         except Exception as exc:
-            logger.warning("Combined chain failed (%s) — falling back to separate mode", exc)
+            logger.info("Combined chain failed (%s) — falling back to separate mode", exc)
             mode = "separate"
 
-    classification = await classify_message(text)
+    async with _get_api_semaphore():
+        classification = await classify_message(text)
     is_job = bool(classification.get("is_job_post"))
     confidence = float(classification.get("confidence", 0.0))
     return _make_route_result(is_job, confidence, [], "separate", group)
@@ -140,7 +155,8 @@ async def extract(state: PipelineState) -> dict:
 
     Only reached in separate mode after the classifier confirms this is a job post.
     """
-    jobs = await extract_job(state["message"].get("text", ""))
+    async with _get_api_semaphore():
+        jobs = await extract_job(state["message"].get("text", ""))
     return {"jobs": jobs}
 
 

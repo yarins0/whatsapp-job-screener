@@ -199,10 +199,19 @@ def configure_env() -> str:
     if provider == "anthropic":
         print()
         print("  -- Prompt Cache --")
-        print("  Caching speeds up repeated requests and reduces API costs.")
-        print("  Enter a number of seconds (e.g. 300) or 'off' to disable.")
+        print("  Caching reuses system prompts across API calls, lowering cost.")
+        print("  Valid values:")
+        print("    off   — disabled (default)")
+        print("    5m    — 5-minute cache  (good for message bursts)")
+        print("    1h    — 1-hour cache    (good for sustained traffic)")
+        print("    auto  — auto-detects burst vs sparse traffic")
         print()
-        cache_ttl = _ask("PROMPT_CACHE_TTL", default=existing.get("PROMPT_CACHE_TTL", "off"))
+        _VALID_CACHE_TTLS = {"off", "5m", "1h", "auto"}
+        while True:
+            cache_ttl = _ask("PROMPT_CACHE_TTL", default=existing.get("PROMPT_CACHE_TTL", "off"))
+            if cache_ttl in _VALID_CACHE_TTLS:
+                break
+            print(f"  Invalid value — must be one of: {', '.join(sorted(_VALID_CACHE_TTLS))}")
         wizard_lines.append(f"PROMPT_CACHE_TTL={cache_ttl}")
 
     # --- Duplicate window ----------------------------------------------------

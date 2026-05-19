@@ -143,7 +143,7 @@ class TestConfigureEnv:
 
     def test_fresh_anthropic(self, tmp_path):
         env_path = tmp_path / ".env"
-        provider = self._run(env_path, ["1", "sk-ant-key", "bot:token", "12345", "300", "7", "n"])
+        provider = self._run(env_path, ["1", "sk-ant-key", "bot:token", "12345", "5m", "7", "n"])
         assert provider == "anthropic"
         content = env_path.read_text()
         assert "LLM_PROVIDER=anthropic" in content
@@ -191,8 +191,14 @@ class TestConfigureEnv:
 
     def test_anthropic_writes_prompt_cache_ttl(self, tmp_path):
         env_path = tmp_path / ".env"
-        self._run(env_path, ["1", "sk-ant", "bot:token", "12345", "300", "7", "n"])
-        assert "PROMPT_CACHE_TTL=300" in env_path.read_text()
+        self._run(env_path, ["1", "sk-ant", "bot:token", "12345", "5m", "7", "n"])
+        assert "PROMPT_CACHE_TTL=5m" in env_path.read_text()
+
+    def test_anthropic_cache_ttl_rejects_invalid_then_accepts(self, tmp_path):
+        env_path = tmp_path / ".env"
+        # "invalid" and "300" are rejected; "auto" is accepted on the third try
+        self._run(env_path, ["1", "sk-ant", "bot:token", "12345", "invalid", "300", "auto", "7", "n"])
+        assert "PROMPT_CACHE_TTL=auto" in env_path.read_text()
 
     def test_anthropic_cache_ttl_default_is_off(self, tmp_path):
         env_path = tmp_path / ".env"
