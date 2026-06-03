@@ -19,6 +19,7 @@
     "unpaid",
     "volunteer",
     "senior",
+    "mid-level",
     "sales",
     "qa",
     "student",
@@ -32,7 +33,10 @@
     "manager",
     "data engineer",
     "data analyst",
-    "verification engineer"
+    "verification",
+    "data scientist",
+    "mechanical engineer",
+    "it infrastructure"
   ],
   "location_blocklist": [
     "Jerusalem",
@@ -41,7 +45,8 @@
     "Kiryat Shmona",
     "North Israel",
     "Kiryat Motzkin",
-    "ירושלים"
+    "ירושלים",
+    "Modiin-Maccabim-Reut"
   ],
   "min_salary": null
 }
