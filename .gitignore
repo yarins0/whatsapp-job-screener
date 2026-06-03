@@ -23,6 +23,7 @@ sources/whatsapp/.last_seen.json
 
 # Telegram source listener session + state
 sources/telegram/*.session
+sources/telegram/.session-journal
 sources/telegram/.last_seen.json
 
 # Database
