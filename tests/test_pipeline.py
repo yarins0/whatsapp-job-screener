@@ -83,6 +83,37 @@ async def test_stores_a_qualified_job(temp_db):
     assert n == 1
 
 
+def _read_seen(db_path, job_id: int) -> int:
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT seen FROM jobs WHERE id = ?", (job_id,)).fetchone()[0]
+    finally:
+        conn.close()
+
+
+@pytest.mark.asyncio
+async def test_successful_alert_marks_job_seen(temp_db):
+    """A delivered instant alert flags the job seen, so the digest won't re-send it."""
+    with patch("agent.graph.classify_message", _mock_classify(True, 0.95)), \
+         patch("agent.graph.extract_job", _mock_extract(_JOB_BACKEND)), \
+         patch("digest.digest._send_telegram", return_value=True):
+        result = await run_pipeline(_MSG)  # notify defaults to True
+
+    assert _read_seen(temp_db, result["job_id"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_unsent_alert_leaves_job_unseen(temp_db):
+    """If Telegram isn't configured the alert returns False — the job stays unseen
+    so the daily digest can still pick it up later."""
+    with patch("agent.graph.classify_message", _mock_classify(True, 0.95)), \
+         patch("agent.graph.extract_job", _mock_extract(_JOB_BACKEND)), \
+         patch("digest.digest._send_telegram", return_value=False):
+        result = await run_pipeline(_MSG)
+
+    assert _read_seen(temp_db, result["job_id"]) == 0
+
+
 @pytest.mark.asyncio
 async def test_skips_non_job_post(temp_db):
     msg = {"group": "g", "sender": "s", "text": "anyone tried the new MacBook?", "timestamp": 0}

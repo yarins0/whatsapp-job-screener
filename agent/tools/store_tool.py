@@ -67,6 +67,22 @@ def store_job(job: dict) -> int | None:
     return row_id
 
 
+def mark_seen(job_id: int) -> None:
+    """Flag a job as delivered (``seen = 1``).
+
+    Called after a successful instant Telegram alert so ``seen`` reflects
+    "delivered to the owner by any channel" — not just "included in a digest".
+    This keeps the daily digest from re-sending the job and lets the retention
+    cleanup eventually purge it.
+    """
+    conn = sqlite3.connect(_db_path())
+    try:
+        conn.execute("UPDATE jobs SET seen = 1 WHERE id = ?", (job_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _try_is_time_duplicate(job: dict) -> bool:
     """Return True if the same role at the same company was stored within 7 days.
 

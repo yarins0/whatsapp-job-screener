@@ -78,7 +78,7 @@ A message may contain multiple job posts. The extractor normalises to a list via
 1. **Dedup** (`agent/tools/dedup_tool.py`) — atomic `INSERT OR IGNORE` on `seen_hashes` table.
 2. **Filter** (`agent/tools/filter_tool.py`) — calls `load_prefs()` from `agent/tools/prefs_tool.py` (reads `agent/prefs.json` on every call so Telegram-bot changes take effect immediately). Returns `(passed, reason)`.
 3. **Store** (`agent/tools/store_tool.py`) — checks for a time-duplicate (same title+company within `DUPLICATE_WINDOW_DAYS` days), then inserts into `jobs` table. Returns the new row `id`, or `None` if suppressed as a time-duplicate.
-4. **Notify** — sends an instant Telegram alert per stored job via `digest.digest._send_telegram`, with two inline buttons: **Block role** and **Block city**. Text is escaped for Telegram Markdown V1 via `_md()` in `graph.py`.
+4. **Notify** — sends an instant Telegram alert per stored job via `digest.digest._send_telegram`, with two inline buttons: **Block role** and **Block city**. Text is escaped for Telegram Markdown V1 via `_md()` in `graph.py`. `_notify_job` returns whether the alert was actually delivered; on success `process_jobs` calls `store_tool.mark_seen(job_id)` so a delivered job is flagged `seen = 1` immediately (not just after the daily digest).
 
 ### Ingest API: `api/main.py`
 
@@ -199,6 +199,7 @@ Access control: the owner is identified by `TELEGRAM_CHAT_ID`. Write/discovery c
 - **`CHROMA_DB_PATH` env var** — `vector_store` reads this; `temp_chroma` overrides it per test. `temp_db` also sets it so tests using a temp SQLite DB get an isolated Chroma too.
 - **Vector indexing is non-fatal** — `store_tool._try_index_job` wraps `index_job` in try/except so a missing Chroma never stops SQLite storage.
 - **Time-duplicate dedup** — `is_time_duplicate(title, company)` queries `jobs` for matching title+company within `DUPLICATE_WINDOW_DAYS` days. Skipped when `company` is `None`.
+- **Retention cleanup** — `agent/tools/cleanup_tool.py::cleanup_old_records()` deletes records older than `DUPLICATE_WINDOW_DAYS + 7` days (the `+7` grace guarantees nothing inside the active dedup window is touched): all expired `seen_hashes`, plus `jobs` rows that are both past the cutoff **and** `seen = 1` (undelivered jobs are kept so a broken digest never loses one). Deleted job ids are removed from the Chroma index via `vector_store.delete_jobs`. Scheduled in `digest/digest.py` daily at 03:00 **and** once on startup (so intermittently-run deployments still clean up). Idempotent and age-based, so a missed run self-corrects on the next pass.
 - **Dedup is atomic** — `INSERT OR IGNORE` + `rowcount` eliminates the SELECT+INSERT race.
 - **Filter reads prefs on every call** — Telegram-bot changes take effect on the next message without a restart.
 - **Retry queue** — `api/main.py` catches all pipeline exceptions and enqueues retries; the WhatsApp/Telegram listeners never see a 500.
@@ -218,7 +219,7 @@ Fields: `roles` (keyword allow-list on title+summary), `blocklist` (auto-reject 
 ### Database
 
 `db/schema.sql` defines three tables:
-- `jobs` — stored job posts; `seen` column flipped to `1` after the digest runs.
+- `jobs` — stored job posts; `seen = 1` means "delivered to the owner" — flipped either by a successful instant alert (`store_tool.mark_seen` from `process_jobs`) or by the daily digest (`_mark_seen`). The digest only sends `seen = 0` jobs, so it acts as a catch-up for any alert that never delivered.
 - `seen_hashes` — MD5 hashes for dedup (both `title+company+contact` structured hashes and `raw:` prefix hashes for web scraper raw text).
 - `group_stats` — cumulative message counts per group; drives adaptive mode selection.
 

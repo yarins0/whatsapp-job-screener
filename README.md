@@ -76,7 +76,7 @@ other providers. See **[docs/PROMPT_CACHING.md](docs/PROMPT_CACHING.md)** for op
 | LLM provider | Anthropic (default), OpenAI, Google Gemini, or Ollama — set via `LLM_PROVIDER` + `LLM_MODEL` |
 | Database | SQLite — `jobs`, `seen_hashes`, `group_stats` |
 | Vector search | ChromaDB — `all-MiniLM-L6-v2` embeddings, persisted to `db/chroma/` |
-| Scheduler | APScheduler — daily digest + web scraper polling |
+| Scheduler | APScheduler — daily digest + daily retention cleanup + web scraper polling |
 | Telegram bot | Long-polling — commands + inline buttons |
 | Observability | LangSmith (optional) |
 
@@ -120,14 +120,15 @@ agent/
   tools/
     filter_tool.py          Match job against prefs.json
     dedup_tool.py           Hash-based dedup (structured + raw)
-    store_tool.py           Insert job into jobs table + ChromaDB
+    store_tool.py           Insert job into jobs table + ChromaDB; mark_seen()
+    cleanup_tool.py         Retention purge — old hashes + delivered jobs
     stats_tool.py           Per-group job-post rate; drives adaptive mode
     prefs_tool.py           load/mutate prefs.json
     groups_tool.py          load/mutate whatsapp_sources.json
     telegram_sources_tool.py load/mutate telegram_sources.json
     query_tool.py           query_jobs() + format_jobs_telegram()
     ask_tool.py             Natural-language query → query_jobs()
-  vector_store.py    index_job() + find_similar() + reindex_all()
+  vector_store.py    index_job() + find_similar() + reindex_all() + delete_jobs()
 
 api/
   main.py            FastAPI: POST /ingest, GET /healthz, retry queue
@@ -145,7 +146,7 @@ sources/
       indeed.py      Indeed Israel RSS (disabled — 403)
 
 digest/
-  digest.py          Daily digest — format + send via Telegram
+  digest.py          Daily digest (format + send via Telegram) + schedules retention cleanup
 
 telegram_bot.py      Commands: /help /prefs /blockrole /blockcity /addrole
                                /groups /addgroup /removegroup

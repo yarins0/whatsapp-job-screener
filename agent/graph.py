@@ -38,7 +38,7 @@ from agent.chains.extractor import extract_job
 from agent.tools.dedup_tool import is_duplicate, is_time_duplicate
 from agent.tools.filter_tool import filter_job
 from agent.tools.stats_tool import get_pipeline_mode, record_message
-from agent.tools.store_tool import store_job
+from agent.tools.store_tool import mark_seen, store_job
 
 logger = logging.getLogger(__name__)
 
@@ -200,8 +200,11 @@ async def process_jobs(state: PipelineState) -> dict:
         stored_jobs.append({**job, "job_id": job_id})
 
         # Notify — instant Telegram alert so good jobs aren't missed until the digest.
+        # A successful alert *is* delivery, so mark the job seen: this stops the
+        # digest re-sending it and lets the retention cleanup eventually purge it.
         if notify:
-            _notify_job(enriched, job_id)
+            if _notify_job(enriched, job_id):
+                mark_seen(job_id)
             _notify_demo_users(enriched)
 
     return {"stored_jobs": stored_jobs, "skipped_jobs": skipped_jobs}
@@ -409,11 +412,16 @@ def _notify_demo_users(job: dict) -> None:
         logger.warning("_notify_demo_users failed: %s", exc)
 
 
-def _notify_job(job: dict, job_id: int) -> None:
+def _notify_job(job: dict, job_id: int) -> bool:
     """Send a single-job Telegram notification with inline feedback buttons.
 
     Attaches Block role / Block city buttons so the user can update preferences
     without leaving Telegram. Fails silently if Telegram is not configured.
+
+    Returns:
+        True if the alert was actually delivered to the owner's Telegram, False
+        if Telegram is unconfigured or the send failed. The caller uses this to
+        decide whether to flag the job as seen.
     """
     try:
         from digest.digest import _send_telegram  # noqa: WPS433
@@ -451,6 +459,7 @@ def _notify_job(job: dict, job_id: int) -> None:
                 {"text": f"Block city: {city[:15]}", "callback_data": city_prefix + city_data}
             )
 
-        _send_telegram("\n".join(lines), reply_markup={"inline_keyboard": [buttons]})
+        return _send_telegram("\n".join(lines), reply_markup={"inline_keyboard": [buttons]})
     except Exception as exc:  # noqa: BLE001
         logger.warning("Real-time Telegram notification failed: %s", exc)
+        return False

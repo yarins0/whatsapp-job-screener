@@ -139,12 +139,39 @@ def _monitor_once(procs: list, process_specs: list, spawn) -> None:
             raise SystemExit(1)
 
 
-def _shutdown_all(procs: list) -> None:
-    """Terminate every child process and wait for it to exit."""
-    for proc in procs:
+def _terminate_tree(proc) -> None:
+    """Kill a child process *and its entire descendant tree*.
+
+    ``terminate()`` only kills the direct child, orphaning grandchildren — most
+    importantly the Chrome instance puppeteer launches for the WhatsApp
+    listener, which would keep running after start.py exits. On Windows
+    ``taskkill /F /T`` takes down the whole tree; elsewhere terminate() is used.
+    """
+    if not isinstance(proc, subprocess.Popen):
+        proc.terminate()  # _NullProc — no real OS process behind it
+        return
+    if proc.poll() is not None:
+        return  # already exited
+
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+        )
+    else:
         proc.terminate()
+
+
+def _shutdown_all(procs: list) -> None:
+    """Kill every child process tree and wait (bounded) for each to exit."""
     for proc in procs:
-        proc.wait()
+        _terminate_tree(proc)
+    for proc in procs:
+        # Bounded wait so a stuck child can never hang the shutdown.
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            pass
     _log("info", "All processes stopped.")
 
 

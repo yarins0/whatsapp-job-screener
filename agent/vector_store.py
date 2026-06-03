@@ -203,6 +203,23 @@ def index_job(job_id: int, job: dict, *, embedding_fn=None) -> None:
     collection.upsert(ids=[str(job_id)], documents=[document])
 
 
+def delete_jobs(ids: list[int]) -> None:
+    """Remove jobs from the Chroma collection by id.
+
+    Called by the retention cleanup after the rows are deleted from SQLite, so
+    the vector index never points at jobs that no longer exist. No-op when
+    chromadb is not installed or ``ids`` is empty.
+
+    Args:
+        ids: SQLite row ids of the jobs to remove from the index.
+    """
+    if not _CHROMA_AVAILABLE or not ids:
+        return
+
+    collection = _get_collection()
+    collection.delete(ids=[str(i) for i in ids])
+
+
 def find_similar(text: str, n: int = 5, *, embedding_fn=None) -> list[dict]:
     """Return up to n jobs most semantically similar to text.
 

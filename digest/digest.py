@@ -21,6 +21,7 @@ import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from dotenv import load_dotenv
 
+from agent.tools.cleanup_tool import cleanup_old_records
 from agent.tools.query_tool import _format_job_block
 
 load_dotenv()
@@ -119,5 +120,9 @@ def send_digest() -> dict:
 if __name__ == "__main__":  # pragma: no cover
     scheduler = BlockingScheduler()
     scheduler.add_job(send_digest, "cron", hour=8, minute=0)
-    print("Digest scheduler running. Daily at 08:00 local time. Ctrl-C to stop.")
+    scheduler.add_job(cleanup_old_records, "cron", hour=3, minute=0)
+    # Run once at startup so intermittently-run deployments (e.g. a laptop that's
+    # never up at 03:00) still get cleaned up. Idempotent and cheap to repeat.
+    cleanup_old_records()
+    print("Digest scheduler running. Digest daily at 08:00, cleanup at 03:00 + on startup. Ctrl-C to stop.")
     scheduler.start()
