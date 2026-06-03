@@ -104,6 +104,50 @@ def _cleanup_stale_resources() -> None:
             pass
 
 
+def _confirm_shutdown() -> bool:
+    """Ask whether to stop everything. Returns True to shut down, False to resume.
+
+    Called when Ctrl+C is caught. Any answer other than 'y' leaves all child
+    processes running and resumes monitoring. A second Ctrl+C (or EOF) at the
+    prompt is treated as confirmation so repeated presses still quit.
+    """
+    try:
+        answer = input("\n[start] Shut down all processes? [y/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        return True
+    return answer == "y"
+
+
+def _monitor_once(procs: list, process_specs: list, spawn) -> None:
+    """One health-check pass: retire clean exits, restart crashed listeners.
+
+    Mutates *procs* in place. Raises SystemExit if a non-restartable process
+    (the API or digest) exits, which propagates up to trigger shutdown.
+    """
+    for i, (proc, (label, cmd, auto_restart)) in enumerate(zip(procs, process_specs)):
+        if proc.poll() is None:
+            continue  # still running
+        if proc.returncode == 0:
+            _log("info", f"'{label}' exited cleanly (code 0). Not restarting.")
+            procs[i] = _NullProc()
+        elif auto_restart:
+            _log("warning", f"'{label}' crashed (code {proc.returncode}). Restarting in {LISTENER_RESTART_DELAY}s...")
+            time.sleep(LISTENER_RESTART_DELAY)
+            procs[i] = spawn(label, cmd)
+        else:
+            _log("error", f"'{label}' exited with code {proc.returncode}. Shutting down...")
+            raise SystemExit(1)
+
+
+def _shutdown_all(procs: list) -> None:
+    """Terminate every child process and wait for it to exit."""
+    for proc in procs:
+        proc.terminate()
+    for proc in procs:
+        proc.wait()
+    _log("info", "All processes stopped.")
+
+
 def main() -> None:
     python = sys.executable  # same venv Python that's running this script
 
@@ -126,6 +170,15 @@ def main() -> None:
     # turning Hebrew and emoji into '?' before start.py ever sees them.
     child_env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
 
+    # On Windows, Ctrl+C is broadcast to the entire console process group, so
+    # every child would receive it directly and die before start.py could ask
+    # for confirmation. Putting each child in its own group means only start.py
+    # gets the signal; children are stopped explicitly via terminate() instead.
+    # No-op on POSIX (creationflags must be 0 there).
+    creationflags = (
+        subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+    )
+
     def spawn(label: str, cmd: list[str]) -> subprocess.Popen:
         proc = subprocess.Popen(
             cmd,
@@ -136,6 +189,7 @@ def main() -> None:
             errors="replace",
             env=child_env,
             bufsize=1,
+            creationflags=creationflags,
         )
         thread = threading.Thread(target=stream, args=(proc, label), daemon=True)
         thread.start()
@@ -146,32 +200,20 @@ def main() -> None:
 
     _log("info", "All processes running. Press Ctrl+C to stop.")
 
+    # Ctrl+C is caught per-iteration so it can prompt for confirmation: only a
+    # 'y' breaks the loop, anything else resumes with all children untouched.
+    # SystemExit (a non-restartable child died) escapes the inner handler and
+    # falls through to the finally block for an unconditional shutdown.
+    shutting_down = False
     try:
-        while True:
-            for i, (proc, (label, cmd, auto_restart)) in enumerate(zip(procs, process_specs)):
-                if proc.poll() is not None:
-                    if proc.returncode == 0:
-                        # Clean exit — the process decided there was nothing to do
-                        # (e.g. no sources configured, no session file). Don't restart.
-                        _log("info", f"'{label}' exited cleanly (code 0). Not restarting.")
-                        # Replace with a sentinel that never exits so the loop ignores it.
-                        procs[i] = _NullProc()
-                    elif auto_restart:
-                        _log("warning", f"'{label}' crashed (code {proc.returncode}). Restarting in {LISTENER_RESTART_DELAY}s...")
-                        time.sleep(LISTENER_RESTART_DELAY)
-                        procs[i] = spawn(label, cmd)
-                    else:
-                        _log("error", f"'{label}' exited with code {proc.returncode}. Shutting down...")
-                        raise SystemExit(1)
-            threading.Event().wait(timeout=2)
-    except KeyboardInterrupt:
-        _log("info", "Shutting down...")
+        while not shutting_down:
+            try:
+                _monitor_once(procs, process_specs, spawn)
+                threading.Event().wait(timeout=2)
+            except KeyboardInterrupt:
+                shutting_down = _confirm_shutdown()
     finally:
-        for proc in procs:
-            proc.terminate()
-        for proc in procs:
-            proc.wait()
-        _log("info", "All processes stopped.")
+        _shutdown_all(procs)
 
 
 if __name__ == "__main__":
