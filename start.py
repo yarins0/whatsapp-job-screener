@@ -101,6 +101,22 @@ def _kill_port(port: int) -> None:
         pass
 
 
+def _ensure_schema() -> None:
+    """Create the SQLite schema if it's missing so startup can't crash on it.
+
+    The digest runs a retention cleanup the instant it boots, querying the
+    ``jobs`` table directly. If the DB file is absent or empty (e.g. deleted
+    out-of-band), that query raises and — because the digest is non-restartable
+    — takes the whole stack down. Initialising here first makes a missing DB
+    self-heal into a valid empty one. ``init_db`` is idempotent
+    (CREATE TABLE IF NOT EXISTS), so running it on every launch is safe.
+    """
+    from db.init_db import init_db
+
+    init_db()
+    _log("info", "Database schema verified.")
+
+
 def _cleanup_stale_resources() -> None:
     _kill_port(_API_PORT)
 
@@ -201,6 +217,7 @@ def _shutdown_all(procs: list) -> None:
 def main() -> None:
     python = sys.executable  # same venv Python that's running this script
 
+    _ensure_schema()
     _cleanup_stale_resources()
 
     # (label, command, auto_restart)

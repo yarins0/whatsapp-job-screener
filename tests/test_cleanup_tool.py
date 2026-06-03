@@ -106,6 +106,19 @@ def test_removes_expired_jobs_from_vector_index(temp_db, monkeypatch):
     assert captured["ids"] == [1]
 
 
+def test_uninitialised_db_is_noop(tmp_path, monkeypatch):
+    """An existing-but-empty DB file (no schema) must not crash cleanup.
+
+    Reproduces the 0-byte ``jobs.db`` that took the whole stack down: the file
+    exists (so the ``db.exists()`` guard passes) but has no tables.
+    """
+    empty_db = tmp_path / "empty.db"
+    empty_db.touch()  # 0-byte file — exists() is True, but no tables
+    monkeypatch.setenv("JOBS_DB_PATH", str(empty_db))
+
+    assert cleanup_old_records() == {"hashes": 0, "jobs": 0}
+
+
 def test_retention_is_window_plus_grace(monkeypatch):
     monkeypatch.setenv("DUPLICATE_WINDOW_DAYS", "10")
     assert _retention_days() == 10 + RETENTION_GRACE_DAYS

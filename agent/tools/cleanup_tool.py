@@ -33,6 +33,20 @@ def _retention_days() -> int:
     return _duplicate_window_days() + RETENTION_GRACE_DAYS
 
 
+def _tables_ready(conn: sqlite3.Connection) -> bool:
+    """True only if the schema has been initialised.
+
+    Guards against an existing-but-empty DB file (which passes the ``db.exists()``
+    check yet holds no tables) so cleanup never raises
+    ``OperationalError: no such table``.
+    """
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type = 'table' AND name IN ('jobs', 'seen_hashes')"
+    ).fetchall()
+    return len(rows) == 2
+
+
 def cleanup_old_records() -> dict:
     """Delete expired dedup hashes and old delivered jobs.
 
@@ -55,6 +69,12 @@ def cleanup_old_records() -> dict:
 
     conn = sqlite3.connect(db)
     try:
+        if not _tables_ready(conn):
+            # The file exists but has no schema (e.g. a 0-byte DB left behind by
+            # a bare connect after the real DB went missing). Degrade to a no-op
+            # rather than raising "no such table" and crashing the digest.
+            return {"hashes": 0, "jobs": 0}
+
         expired_job_ids = [
             row[0]
             for row in conn.execute(
