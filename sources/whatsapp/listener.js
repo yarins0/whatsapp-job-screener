@@ -142,6 +142,21 @@ function log(level, msg) {
   process.stdout.write(`[${now}][${level}] ${msg}\n`);
 }
 
+// Last-resort safety net. whatsapp-web.js throws some errors asynchronously
+// inside Puppeteer event handlers that have no try/catch (e.g. a stray
+// "Could not load response body" while WhatsApp Web navigates). Those become
+// unhandled rejections that would otherwise kill Node with a raw stack trace,
+// bypassing the logger and the orderly exit-1 restart path. Catching them here
+// turns every such crash into a clean exit(1) so start.py restarts the listener.
+function exitForRestart(label, err) {
+  const message = err && err.stack ? err.stack : String(err);
+  log('error', `[${label}] Uncaught — exiting for restart: ${message}`);
+  process.exit(1);
+}
+
+process.on('unhandledRejection', (reason) => exitForRestart('unhandledRejection', reason));
+process.on('uncaughtException', (err) => exitForRestart('uncaughtException', err));
+
 // Destroy the current browser process before launching a new one. Calling
 // initialize() directly without destroy() leaves the old Chrome process alive,
 // and Puppeteer will refuse to open a second browser on the same userDataDir.
@@ -330,6 +345,19 @@ async function resolveQrMessage() {
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: 'sources/whatsapp/.wwebjs_auth' }),
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  // Pin a known-good WhatsApp Web version served via request interception.
+  // Without this, whatsapp-web.js scrapes the live page to auto-detect the
+  // version, calling `res.text()` in a response listener that has no try/catch.
+  // On certain navigations that throws "Could not load response body", which
+  // becomes an unhandled rejection and crashes the whole process. Serving a
+  // cached HTML takes the request-interception branch and never reads the
+  // response body, eliminating the crash and the WA-version-drift fragility.
+  // Bump the version string if WhatsApp ships an incompatible Web update; the
+  // available builds are listed at github.com/wppconnect-team/wa-version.
+  webVersionCache: {
+    type: 'remote',
+    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1037892406-alpha.html',
+  },
   puppeteer: {
     args: ['--no-sandbox'],
     protocolTimeout: 120000, // 120s — getChats() on large accounts can be slow
