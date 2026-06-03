@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -43,6 +44,14 @@ def stream(proc: subprocess.Popen, label: str) -> None:
 
 
 LISTENER_RESTART_DELAY = 8  # seconds to wait before restarting the listener
+
+# Graceful-shutdown coordination. A custom SIGINT handler (installed in main)
+# sets this event instead of raising KeyboardInterrupt, so no amount of Ctrl+C
+# mashing can interrupt teardown with a traceback. Shutdown needs two presses
+# within CONFIRM_WINDOW_SECONDS so a single stray Ctrl+C never quits.
+_shutdown_event = threading.Event()
+_last_sigint_at = [0.0]  # list so the handler can mutate it without `global`
+CONFIRM_WINDOW_SECONDS = 5.0
 
 class _NullProc:
     """Stand-in for a process that exited cleanly and should not be restarted.
@@ -104,18 +113,23 @@ def _cleanup_stale_resources() -> None:
             pass
 
 
-def _confirm_shutdown() -> bool:
-    """Ask whether to stop everything. Returns True to shut down, False to resume.
+def _request_shutdown(signum, frame) -> None:
+    """SIGINT/SIGBREAK handler — confirm-on-second-press, never raises.
 
-    Called when Ctrl+C is caught. Any answer other than 'y' leaves all child
-    processes running and resumes monitoring. A second Ctrl+C (or EOF) at the
-    prompt is treated as confirmation so repeated presses still quit.
+    Installed once at startup so Ctrl+C can never surface as a KeyboardInterrupt
+    at an arbitrary point (which previously crashed teardown mid-kill). The first
+    press arms shutdown and prints a hint; a second press within
+    CONFIRM_WINDOW_SECONDS sets the event the main loop watches.
     """
-    try:
-        answer = input("\n[start] Shut down all processes? [y/N]: ").strip().lower()
-    except (KeyboardInterrupt, EOFError):
-        return True
-    return answer == "y"
+    if _shutdown_event.is_set():
+        return  # already shutting down — ignore further presses
+    now = time.monotonic()
+    if now - _last_sigint_at[0] <= CONFIRM_WINDOW_SECONDS:
+        print("\n[start] Shutting down...", flush=True)
+        _shutdown_event.set()
+    else:
+        _last_sigint_at[0] = now
+        print("\n[start] Press Ctrl+C again to shut everything down.", flush=True)
 
 
 def _monitor_once(procs: list, process_specs: list, spawn) -> None:
@@ -164,6 +178,15 @@ def _terminate_tree(proc) -> None:
 
 def _shutdown_all(procs: list) -> None:
     """Kill every child process tree and wait (bounded) for each to exit."""
+    # Fully ignore Ctrl+C now that teardown has begun — silences the "press
+    # again" hint and stops the handler firing mid-kill. Safe to set here because
+    # the active handler (_request_shutdown) never raises, so even a press landing
+    # on this very line can't produce a traceback.
+    try:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except (ValueError, OSError):
+        pass  # best effort — not callable outside the main thread
+
     for proc in procs:
         _terminate_tree(proc)
     for proc in procs:
@@ -225,20 +248,21 @@ def main() -> None:
 
     procs = [spawn(label, cmd) for label, cmd, _ in process_specs]
 
-    _log("info", "All processes running. Press Ctrl+C to stop.")
+    # Install the custom Ctrl+C handler *before* announcing readiness, so the
+    # very first press is handled gracefully (sets _shutdown_event) instead of
+    # raising KeyboardInterrupt. SIGBREAK covers Ctrl+Break on Windows.
+    signal.signal(signal.SIGINT, _request_shutdown)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _request_shutdown)
 
-    # Ctrl+C is caught per-iteration so it can prompt for confirmation: only a
-    # 'y' breaks the loop, anything else resumes with all children untouched.
-    # SystemExit (a non-restartable child died) escapes the inner handler and
-    # falls through to the finally block for an unconditional shutdown.
-    shutting_down = False
+    _log("info", "All processes running. Press Ctrl+C twice to stop.")
+
+    # SystemExit (a non-restartable child died) escapes _monitor_once and falls
+    # through to the finally block for an unconditional shutdown.
     try:
-        while not shutting_down:
-            try:
-                _monitor_once(procs, process_specs, spawn)
-                threading.Event().wait(timeout=2)
-            except KeyboardInterrupt:
-                shutting_down = _confirm_shutdown()
+        while not _shutdown_event.is_set():
+            _monitor_once(procs, process_specs, spawn)
+            _shutdown_event.wait(timeout=2)
     finally:
         _shutdown_all(procs)
 
