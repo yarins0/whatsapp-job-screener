@@ -342,6 +342,24 @@ def _md(text: str) -> str:
     return text
 
 
+# Telegram caps inline-button callback_data at 64 bytes (UTF-8 encoded).
+_CALLBACK_DATA_MAX_BYTES = 64
+
+
+def _truncate_bytes(text: str, max_bytes: int) -> str:
+    """Truncate text so its UTF-8 encoding fits within max_bytes.
+
+    Slices on the encoded bytes, then drops any trailing partial multi-byte
+    sequence. Needed because Hebrew characters are 2 bytes each, so slicing by
+    character count (e.g. text[:40]) can still exceed Telegram's byte limit and
+    get the whole message rejected with 400 BUTTON_DATA_INVALID.
+    """
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+
 def _notify_demo_users(job: dict) -> None:
     """Send a plain-text job notification to every registered demo user.
 
@@ -415,15 +433,22 @@ def _notify_job(job: dict, job_id: int) -> None:
             lines.append(_md(summary[:200]))
         lines.append(f"Contact: {_md(contact)}")
 
-        # Callback data is capped at 64 bytes by the Telegram API.
-        role_kw = title.lower()[:40]
+        # Callback data is capped at 64 bytes by the Telegram API. Reserve the
+        # fixed prefix and fill the rest with as much of the keyword as fits,
+        # measured in bytes so multi-byte (e.g. Hebrew) text doesn't overflow.
+        role_prefix = f"block_role:{job_id}:"
+        role_budget = _CALLBACK_DATA_MAX_BYTES - len(role_prefix.encode("utf-8"))
+        role_kw = _truncate_bytes(title.lower(), role_budget)
         buttons = [
-            {"text": "Block role", "callback_data": f"block_role:{job_id}:{role_kw}"},
+            {"text": "Block role", "callback_data": role_prefix + role_kw},
         ]
         city = (job.get("location") or "").strip()
         if city and not is_remote:
+            city_prefix = f"block_city:{job_id}:"
+            city_budget = _CALLBACK_DATA_MAX_BYTES - len(city_prefix.encode("utf-8"))
+            city_data = _truncate_bytes(city, city_budget)
             buttons.append(
-                {"text": f"Block city: {city[:15]}", "callback_data": f"block_city:{job_id}:{city[:30]}"}
+                {"text": f"Block city: {city[:15]}", "callback_data": city_prefix + city_data}
             )
 
         _send_telegram("\n".join(lines), reply_markup={"inline_keyboard": [buttons]})

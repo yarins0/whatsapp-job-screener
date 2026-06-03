@@ -211,3 +211,43 @@ async def test_pipeline_records_stats_for_non_job_post(temp_db):
     finally:
         conn.close()
     assert row == (1, 0)
+
+
+def test_truncate_bytes_respects_byte_budget_for_multibyte_text():
+    """Multi-byte (Hebrew) text must be cut on a byte budget, not a char count."""
+    from agent.graph import _truncate_bytes
+
+    hebrew = "מרכז" * 10  # each character is 2 bytes in UTF-8
+    out = _truncate_bytes(hebrew, 10)
+    assert len(out.encode("utf-8")) <= 10
+    assert out.encode("utf-8").decode("utf-8") == out  # never splits a character
+    assert _truncate_bytes("abc", 64) == "abc"  # short text returned unchanged
+
+
+def test_notify_job_callback_data_within_telegram_byte_limit():
+    """Hebrew titles/cities must not overflow Telegram's 64-byte callback_data limit.
+
+    Regression: slicing the keyword by character count produced 85-byte payloads
+    for Hebrew titles, which Telegram rejects with 400 BUTTON_DATA_INVALID.
+    """
+    from agent.graph import _notify_job
+
+    captured: dict = {}
+
+    def fake_send(text, reply_markup=None):
+        captured["reply_markup"] = reply_markup
+        return True
+
+    job = {
+        "title": "מהנדס ביצוע ג'וניור לתשתיות רכבת במרכז",
+        "company": "SVT.jobs",
+        "location": "מרכז",
+    }
+    with patch("digest.digest._send_telegram", side_effect=fake_send):
+        _notify_job(job, 625)
+
+    assert "reply_markup" in captured, "_send_telegram was not called"
+    buttons = captured["reply_markup"]["inline_keyboard"][0]
+    assert buttons, "expected at least the Block role button"
+    for button in buttons:
+        assert len(button["callback_data"].encode("utf-8")) <= 64
