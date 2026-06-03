@@ -1,0 +1,28 @@
+#!/bin/sh
+# Pre-commit guard — runs the full test suite (Node jest + Python pytest) and
+# aborts the commit if either suite fails. Both suites run fully offline.
+#
+# Installed via:  git config core.hooksPath .githooks
+# Git invokes hooks with the working directory set to the repository root,
+# so the relative paths below resolve correctly.
+#
+# Bypass in an emergency with:  git commit --no-verify
+
+set -e
+
+echo "[pre-commit] Running Node.js tests (jest)..."
+npm test
+
+echo "[pre-commit] Running Python tests (pytest)..."
+# Prefer the project virtualenv if present so pytest and its dependencies
+# resolve exactly as they do in development; fall back to python on PATH.
+if [ -x "venv/Scripts/python.exe" ]; then
+  PYTHON="venv/Scripts/python.exe"
+elif [ -x "venv/bin/python" ]; then
+  PYTHON="venv/bin/python"
+else
+  PYTHON="python"
+fi
+"$PYTHON" -m pytest tests/ -q
+
+echo "[pre-commit] All tests passed — proceeding with commit."
