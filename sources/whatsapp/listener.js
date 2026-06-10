@@ -51,6 +51,12 @@ const AUTH_DIR = path.join(__dirname, '.wwebjs_auth');
 const SESSION_DIR = path.join(AUTH_DIR, 'session');
 const FAIL_COUNT_FILE = path.join(AUTH_DIR, '.fail_count');
 
+// Telegram message id of the QR photo, persisted so it survives crash-restarts.
+// Without this the id lived only in memory: every restart re-sent a brand-new
+// photo (with a notification) instead of editing the existing one in place,
+// spamming the owner whenever the listener thrashed while a scan was pending.
+const QR_MESSAGE_ID_FILE = path.join(AUTH_DIR, '.qr_message_id');
+
 function readFailCount() {
   try { return parseInt(fs.readFileSync(FAIL_COUNT_FILE, 'utf8'), 10) || 0; } catch (_) { return 0; }
 }
@@ -64,6 +70,25 @@ function writeFailCount(n) {
 
 function resetFailCount() {
   try { fs.unlinkSync(FAIL_COUNT_FILE); } catch (_) {}
+}
+
+function readQrMessageId() {
+  try { return parseInt(fs.readFileSync(QR_MESSAGE_ID_FILE, 'utf8'), 10) || null; } catch (_) { return null; }
+}
+
+// Persists the id alongside the in-memory value so a needed rescan keeps editing
+// the same Telegram message in place, even across restarts.
+function setQrMessageId(id) {
+  lastQrMessageId = id;
+  try {
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
+    fs.writeFileSync(QR_MESSAGE_ID_FILE, String(id));
+  } catch (_) {}
+}
+
+function clearQrMessageId() {
+  lastQrMessageId = null;
+  try { fs.unlinkSync(QR_MESSAGE_ID_FILE); } catch (_) {}
 }
 
 // Returns true only if the session directory is actually gone afterwards.
@@ -206,9 +231,11 @@ process.on('uncaughtException', (err) => exitForRestart('uncaughtException', err
 // and Puppeteer will refuse to open a second browser on the same userDataDir.
 async function reconnect() {
   qrPrinted = false;
-  lastQrMessageId = null;
   pendingQr = null;
   regenPromptActive = false;
+  // lastQrMessageId is intentionally left intact (and is disk-backed): if this
+  // reconnect needs a fresh scan, editing the existing QR message in place is
+  // cleaner than sending a new photo. It is cleared only once a scan succeeds.
   try {
     await client.destroy();
   } catch (err) {
@@ -324,43 +351,65 @@ function promptRegen(callback) {
   });
 }
 
-// Telegram message ID of the last QR photo sent. Reused to edit in place so
-// the owner sees a refreshed code without accumulating new messages.
-// Reset to null on reconnect so each new session starts with a fresh send.
-let lastQrMessageId = null;
+// Telegram message ID of the last QR photo sent. Reused to edit in place so the
+// owner sees one refreshing code instead of a new photo on every ~20s regen,
+// reconnect, or crash-restart. Loaded from disk so it survives restarts; cleared
+// only once a scan succeeds (resolveQrMessage).
+let lastQrMessageId = readQrMessageId();
 
-// Send or update the QR code photo in the owner's Telegram chat.
-// First call sends a new message; subsequent calls edit it in place.
-// Only runs when TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set.
+// Replace the photo on the already-sent QR message. Returns false if the edit
+// failed (e.g. the owner deleted the message, or the persisted id is stale after
+// a restart) so the caller can fall back to sending a fresh photo.
+// attach://photo links the multipart field named "photo" as the new media.
+async function editQrInTelegram(token, chatId, pngBuffer) {
+  const blob = new Blob([pngBuffer], { type: 'image/png' });
+  const form = new FormData();
+  form.append('chat_id', chatId);
+  form.append('message_id', String(lastQrMessageId));
+  form.append('media', JSON.stringify({ type: 'photo', media: 'attach://photo' }));
+  form.append('photo', blob, 'whatsapp-qr.png');
+  try {
+    await axios.post(`https://api.telegram.org/bot${token}/editMessageMedia`, form);
+    return true;
+  } catch (err) {
+    log('warning', `[qr] Could not edit existing QR message: ${err.message}`);
+    return false;
+  }
+}
+
+// Send a new QR photo and remember its id (memory + disk) so future updates edit
+// it in place rather than sending another photo.
+async function sendNewQrToTelegram(token, chatId, pngBuffer) {
+  const blob = new Blob([pngBuffer], { type: 'image/png' });
+  const form = new FormData();
+  form.append('chat_id', chatId);
+  form.append('photo', blob, 'whatsapp-qr.png');
+  form.append('caption', 'WhatsApp QR — scan within 20 seconds.');
+  try {
+    const res = await axios.post(`https://api.telegram.org/bot${token}/sendPhoto`, form);
+    setQrMessageId(res.data.result.message_id);
+  } catch (err) {
+    log('warning', `[qr] Could not send QR to Telegram: ${err.message}`);
+  }
+}
+
+// Push the current QR to the owner's Telegram chat. Edits the one persisted
+// message in place whenever possible (across regens and restarts) so there is no
+// new notification or chat spam; only sends a fresh photo when no editable
+// message exists. Only runs when TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set.
 async function sendQrToTelegram(qr) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) return;
+  let pngBuffer;
   try {
-    const pngBuffer = await QRCode.toBuffer(qr, { scale: 8 });
-    const blob = new Blob([pngBuffer], { type: 'image/png' });
-
-    if (lastQrMessageId) {
-      // Edit the existing message so there is no new notification or chat spam.
-      // attach://photo links the multipart field named "photo" as the new media.
-      const form = new FormData();
-      form.append('chat_id', chatId);
-      form.append('message_id', String(lastQrMessageId));
-      form.append('media', JSON.stringify({ type: 'photo', media: 'attach://photo' }));
-      form.append('photo', blob, 'whatsapp-qr.png');
-      await axios.post(`https://api.telegram.org/bot${token}/editMessageMedia`, form);
-    } else {
-      const form = new FormData();
-      form.append('chat_id', chatId);
-      form.append('photo', blob, 'whatsapp-qr.png');
-      form.append('caption', 'WhatsApp QR — scan within 20 seconds.');
-      const res = await axios.post(`https://api.telegram.org/bot${token}/sendPhoto`, form);
-      lastQrMessageId = res.data.result.message_id;
-    }
-    log('info', '[qr] QR code updated in Telegram');
+    pngBuffer = await QRCode.toBuffer(qr, { scale: 8 });
   } catch (err) {
-    log('warning', `[qr] Could not update QR in Telegram: ${err.message}`);
+    log('warning', `[qr] Could not render QR image: ${err.message}`);
+    return;
   }
+  if (lastQrMessageId && (await editQrInTelegram(token, chatId, pngBuffer))) return;
+  await sendNewQrToTelegram(token, chatId, pngBuffer);
 }
 
 // Edit the QR message to show a connected confirmation once the scan succeeds.
@@ -375,7 +424,7 @@ async function resolveQrMessage() {
       caption: 'WhatsApp connected.',
     });
   } catch (_) { /* best-effort — ignore if message was already deleted */ }
-  lastQrMessageId = null;
+  clearQrMessageId();
 }
 
 // --- client ----------------------------------------------------------------
@@ -396,8 +445,19 @@ const client = new Client({
   // becomes an unhandled rejection and crashes the whole process. Serving a
   // cached HTML takes the request-interception branch and never reads the
   // response body, eliminating the crash and the WA-version-drift fragility.
-  // Bump the version string if WhatsApp ships an incompatible Web update; the
-  // available builds are listed at github.com/wppconnect-team/wa-version.
+  //
+  // MAINTENANCE — this pin rots as WhatsApp deprecates old client builds, so an
+  // untouched pin will eventually stop connecting. Re-check roughly quarterly,
+  // or sooner if connections start failing on a previously-working session:
+  //   1. List available builds at github.com/wppconnect-team/wa-version.
+  //   2. Bump to a recent build — but NOT the newest. New builds regularly ship
+  //      breaking changes (the "Execution context was destroyed" crash loop that
+  //      motivated this pin came from a too-new build). Pick one a few releases
+  //      back and verify it reaches the QR / connects before committing.
+  //   3. Keep `whatsapp-web.js` itself up to date (`npm outdated`) on the same
+  //      cadence; library and build version need to stay roughly in step.
+  // Last verified working: 2.3000.1040532093-alpha (builds above 1040539221
+  // carried the break).
   webVersionCache: {
     type: 'remote',
     remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1040532093-alpha.html',
@@ -409,16 +469,21 @@ const client = new Client({
 });
 
 client.on('qr', (qr) => {
+  // Always refresh the Telegram QR so the owner can scan the freshest valid code
+  // from their phone. WhatsApp regenerates it every ~20s; this edits the one
+  // persisted message in place rather than sending a new photo each time.
+  sendQrToTelegram(qr);
+
   if (!qrPrinted) {
-    // First QR — send to Telegram once, print to terminal, then wait for a scan.
+    // First QR — print to the terminal, then wait for a scan.
     qrPrinted = true;
-    sendQrToTelegram(qr);
     log('info', 'Scan this QR code with WhatsApp:');
     qrcode.generate(qr, { small: true });
     return;
   }
 
-  // Subsequent QRs: store the latest and ask before printing.
+  // Subsequent QRs in the terminal: store the latest and ask before printing, to
+  // avoid flooding the terminal with a new code every ~20s.
   pendingQr = qr;
   if (regenPromptActive) return; // prompt already shown; pendingQr will be used when answered
 

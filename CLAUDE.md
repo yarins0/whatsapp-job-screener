@@ -105,11 +105,13 @@ On `ready`, reads watched group IDs from `agent/whatsapp_sources.json` (a `{id: 
 **Puppeteer `protocolTimeout`:** Set to 120 s (up from 60 s) to prevent `Runtime.callFunctionOn timed out` errors on accounts with many chats.
 
 **QR code delivery:**
-- First QR is printed to the terminal and sent as a PNG photo to the Telegram owner chat (requires `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`).
-- Each subsequent QR (WhatsApp regenerates every ~20 s) silently edits the existing Telegram message in place via `editMessageMedia` — no extra notifications.
-- Terminal shows `"QR expired — regen another? y/n:"` and waits for input before printing again. While waiting, `pendingQr` always holds the latest code, so typing `y` prints the freshest valid QR.
-- On successful scan, the Telegram message caption is updated to `"WhatsApp connected."`.
-- `qrPrinted`, `lastQrMessageId`, `pendingQr`, and `regenPromptActive` are all reset in `reconnect()` so each new session starts clean.
+- Every QR event sends to Telegram. The first sends a PNG photo to the owner chat (requires `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`); each subsequent QR (WhatsApp regenerates every ~20 s) silently edits that same message in place via `editMessageMedia` — no extra notifications. If the edit fails (e.g. the owner deleted the message), it falls back to sending a fresh photo.
+- `lastQrMessageId` is **persisted to `.wwebjs_auth/.qr_message_id`** (same pattern as `.fail_count`), so a needed re-scan keeps editing the one message in place across reconnects *and* crash-restarts instead of spamming a new photo each time. It is cleared only on a successful scan (`resolveQrMessage`).
+- Terminal: first QR prints immediately; subsequent QRs show `"QR expired — regen another? y/n:"` and wait for input before printing again. While waiting, `pendingQr` always holds the latest code, so typing `y` prints the freshest valid QR.
+- On successful scan, the Telegram message caption is updated to `"WhatsApp connected."` and the persisted id is cleared.
+- `qrPrinted`, `pendingQr`, and `regenPromptActive` are reset in `reconnect()`; `lastQrMessageId` is intentionally **not** reset there (it is disk-backed) so a reconnect that needs a re-scan reuses the existing message.
+
+**Version pin maintenance:** the `webVersionCache` pin (currently `2.3000.1040532093-alpha`) rots as WhatsApp deprecates old client builds. Re-check ~quarterly (or sooner if a previously-working session stops connecting): bump to a *recent but not newest* build from [wa-version](https://github.com/wppconnect-team/wa-version) (new builds regularly ship breaking changes), verify it connects before committing, and keep `whatsapp-web.js` up to date on the same cadence. See the inline comment at the `webVersionCache` pin for the full procedure.
 
 `sources/whatsapp/last_seen.js` — state module (`load`, `save`, `update`). Accepts a custom file path for Jest test isolation.
 
