@@ -150,15 +150,17 @@ async function recordInitFailure() {
 
 // groups.json is a map: { "id@g.us": "Display Name", ... }
 // An empty string means the name has not been resolved yet.
-function loadGroups() {
+function loadGroupMap() {
   try {
-    const raw = fs.readFileSync(GROUPS_FILE, 'utf8');
-    const parsed = JSON.parse(raw);
-    return Object.keys(parsed).filter(Boolean);
+    return JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf8'));
   } catch (err) {
     log('warning', `[groups] Could not read groups.json: ${err.message}`);
-    return [];
+    return {};
   }
+}
+
+function loadGroups() {
+  return Object.keys(loadGroupMap()).filter(Boolean);
 }
 
 // Resolve display names for all watched groups and write them back into
@@ -584,14 +586,22 @@ client.on('disconnected', (reason) => {
 
 client.on('message', async (msg) => {
   try {
-    const chat = await msg.getChat();
-    if (!chat.isGroup) return;
-    // Re-read groups.json on every message so /addgroup and /removegroup
-    // take effect immediately without restarting the listener.
-    if (!loadGroups().includes(chat.id._serialized)) return;
+    // Derive the chat from the already-serialized message instead of calling
+    // msg.getChat(). getChat() is a Puppeteer/CDP round-trip, and under catch-up
+    // load it contends for the single CDP connection and times out
+    // ("Runtime.callFunctionOn timed out"). For a received group message,
+    // msg.from is the group's serialized id (the sender is msg.author).
+    const groupId = msg.from;
+    if (!groupId.endsWith('@g.us')) return; // not a group message
 
-    await forwardMessage(msg, chat.name);
-    lastSeen.update(chat.id._serialized, msg.timestamp);
+    // Re-read groups.json on every message so /addgroup and /removegroup take
+    // effect immediately without restarting the listener.
+    const groupMap = loadGroupMap();
+    if (!(groupId in groupMap)) return;
+
+    // Fall back to the id if the display name hasn't been resolved yet.
+    await forwardMessage(msg, groupMap[groupId] || groupId);
+    lastSeen.update(groupId, msg.timestamp);
   } catch (err) {
     log('error', `Failed to forward message: ${err.message}`);
   }
