@@ -36,6 +36,16 @@ const GROUPS_FILE = path.join(__dirname, '..', '..', 'agent', 'whatsapp_sources.
 // next restart can show a fresh QR code without manual intervention.
 const MAX_INIT_FAILURES = 3;
 
+// clearSession retries: Chrome can keep the session files locked for a moment
+// after it is asked to exit, so a single unlink attempt can lose the race and
+// fail with EBUSY. Retrying with a short pause lets the lock release.
+const SESSION_CLEAR_RETRIES = 3;
+const SESSION_CLEAR_RETRY_DELAY_MS = 1000;
+
+// Upper bound on how long to wait for the browser to tear down during cleanup,
+// so a hung Chrome can never stall the exit-for-restart path.
+const BROWSER_DESTROY_TIMEOUT_MS = 10000;
+
 // Stored outside the session dir so it survives the wipe.
 const AUTH_DIR = path.join(__dirname, '.wwebjs_auth');
 const SESSION_DIR = path.join(AUTH_DIR, 'session');
@@ -56,23 +66,57 @@ function resetFailCount() {
   try { fs.unlinkSync(FAIL_COUNT_FILE); } catch (_) {}
 }
 
-function clearSession() {
+// Returns true only if the session directory is actually gone afterwards.
+// Retries because Chrome can keep the LevelDB files locked for a moment after
+// it is told to exit; a single attempt previously lost that race and failed
+// with EBUSY, leaving the corrupt session in place and the loop running forever.
+async function clearSession() {
+  for (let attempt = 1; attempt <= SESSION_CLEAR_RETRIES; attempt++) {
+    try {
+      fs.rmSync(SESSION_DIR, { recursive: true, force: true });
+      log('info', '[session] Stale session cleared — next restart will show a fresh QR code.');
+      return true;
+    } catch (err) {
+      log('warning', `[session] Could not clear session (attempt ${attempt}/${SESSION_CLEAR_RETRIES}): ${err.message}`);
+      if (attempt < SESSION_CLEAR_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, SESSION_CLEAR_RETRY_DELAY_MS));
+      }
+    }
+  }
+  return false;
+}
+
+// Best-effort browser teardown so Chrome exits and releases its locks on the
+// session dir before we wipe it (or before the process exits). This prevents
+// the two failure modes seen in the wild: the EBUSY that defeated every session
+// wipe, and the corrupt session left when Chrome was hard-killed mid-write to
+// LevelDB. Bounded by a timeout so a hung browser can't stall the exit.
+async function destroyBrowser() {
   try {
-    fs.rmSync(SESSION_DIR, { recursive: true, force: true });
-    log('info', '[session] Stale session cleared — next restart will show a fresh QR code.');
+    await Promise.race([
+      client.destroy(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('destroy() timed out')), BROWSER_DESTROY_TIMEOUT_MS)),
+    ]);
   } catch (err) {
-    log('warning', `[session] Could not clear session: ${err.message}`);
+    log('warning', `[init] Browser teardown during cleanup failed: ${err.message}`);
   }
 }
 
 // Called from both startup and reconnect failure paths so the counter covers
-// all cases where initialize() fails, not just the initial launch.
-function recordInitFailure() {
+// all cases where initialize() fails, not just the initial launch. Destroys the
+// browser first so the session files are unlocked, and only resets the counter
+// when the wipe truly succeeds — otherwise the next launch retries the clear
+// instead of looping forever on a session that was never removed.
+async function recordInitFailure() {
+  await destroyBrowser();
+
   const failCount = readFailCount() + 1;
   if (failCount >= MAX_INIT_FAILURES) {
     log('warning', `[init] ${MAX_INIT_FAILURES} consecutive failures — clearing stale session.`);
-    clearSession();
-    resetFailCount();
+    if (await clearSession()) {
+      resetFailCount();
+    }
   } else {
     writeFailCount(failCount);
     log('info', `[init] Failure ${failCount}/${MAX_INIT_FAILURES} — will clear session on next failure.`);
@@ -177,11 +221,11 @@ async function reconnect() {
   try {
     await client.initialize();
   } catch (err) {
-    // initialize() can fail if Chrome's lock file survives after a bad shutdown.
-    // When Node exits, the OS kills Chrome as its child process, releasing the
-    // lock. start.py will restart this listener process automatically.
+    // recordInitFailure() tears the browser down (releasing the lock and
+    // flushing LevelDB cleanly) and, after enough failures, wipes the stale
+    // session so the next start shows a fresh QR. start.py then restarts us.
     log('error', `[reconnect] initialize() failed — exiting for restart: ${err.message}`);
-    recordInitFailure();
+    await recordInitFailure();
     process.exit(1);
   }
 }
@@ -356,7 +400,7 @@ const client = new Client({
   // available builds are listed at github.com/wppconnect-team/wa-version.
   webVersionCache: {
     type: 'remote',
-    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1037892406-alpha.html',
+    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1040532093-alpha.html',
   },
   puppeteer: {
     args: ['--no-sandbox'],
@@ -494,9 +538,9 @@ client.on('message', async (msg) => {
 // on the next attempt.
 // After MAX_INIT_FAILURES consecutive failures the stale session is wiped so
 // the next restart prompts a fresh QR scan instead of looping forever.
-client.initialize().catch((err) => {
+client.initialize().catch(async (err) => {
   log('error', `[init] initialize() failed — exiting for restart: ${err.message}`);
-  recordInitFailure();
+  await recordInitFailure();
   process.exit(1);
 });
 
