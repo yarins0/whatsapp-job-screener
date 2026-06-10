@@ -45,6 +45,19 @@ def stream(proc: subprocess.Popen, label: str) -> None:
 
 LISTENER_RESTART_DELAY = 8  # seconds to wait before restarting the listener
 
+# A listener that crashes again within this many seconds of starting is
+# "thrashing" (failing during init) rather than recovering from a one-off
+# fault. A crash after a longer healthy run resets the thrash counter so a
+# stable process that dies once is not penalised for earlier trouble.
+HEALTHY_UPTIME_SECONDS = 120
+
+# After this many consecutive fast crashes a listener is retired (left down)
+# instead of restarted forever. This decouples a persistently-broken source
+# (e.g. an upstream WhatsApp Web breakage) from the rest of the stack: the
+# other processes keep running and the logs stop thrashing. Restart start.py
+# to retry a retired listener.
+MAX_FAST_RESTARTS = 5
+
 # Graceful-shutdown coordination. A custom SIGINT handler (installed in main)
 # sets this event instead of raising KeyboardInterrupt, so no amount of Ctrl+C
 # mashing can interrupt teardown with a traceback. Shutdown needs two presses
@@ -148,11 +161,15 @@ def _request_shutdown(signum, frame) -> None:
         print("\n[start] Press Ctrl+C again to shut everything down.", flush=True)
 
 
-def _monitor_once(procs: list, process_specs: list, spawn) -> None:
+def _monitor_once(procs: list, process_specs: list, spawn,
+                  restart_counts: list, start_times: list) -> None:
     """One health-check pass: retire clean exits, restart crashed listeners.
 
-    Mutates *procs* in place. Raises SystemExit if a non-restartable process
-    (the API or digest) exits, which propagates up to trigger shutdown.
+    Mutates *procs*, *restart_counts*, and *start_times* in place. Raises
+    SystemExit if a non-restartable process (the API or digest) exits, which
+    propagates up to trigger shutdown. An auto-restart listener that crashes
+    faster than HEALTHY_UPTIME_SECONDS more than MAX_FAST_RESTARTS times in a
+    row is retired instead of looped on, so a broken source can't thrash.
     """
     for i, (proc, (label, cmd, auto_restart)) in enumerate(zip(procs, process_specs)):
         if proc.poll() is None:
@@ -161,9 +178,19 @@ def _monitor_once(procs: list, process_specs: list, spawn) -> None:
             _log("info", f"'{label}' exited cleanly (code 0). Not restarting.")
             procs[i] = _NullProc()
         elif auto_restart:
-            _log("warning", f"'{label}' crashed (code {proc.returncode}). Restarting in {LISTENER_RESTART_DELAY}s...")
+            # A long, healthy run before this crash means earlier failures are
+            # ancient history — reset the budget so a one-off death recovers.
+            if time.monotonic() - start_times[i] >= HEALTHY_UPTIME_SECONDS:
+                restart_counts[i] = 0
+            restart_counts[i] += 1
+            if restart_counts[i] > MAX_FAST_RESTARTS:
+                _log("error", f"'{label}' crashed {MAX_FAST_RESTARTS} times in a row — leaving it down. The rest of the stack keeps running; restart start.py to retry it.")
+                procs[i] = _NullProc()
+                continue
+            _log("warning", f"'{label}' crashed (code {proc.returncode}). Restart {restart_counts[i]}/{MAX_FAST_RESTARTS} in {LISTENER_RESTART_DELAY}s...")
             time.sleep(LISTENER_RESTART_DELAY)
             procs[i] = spawn(label, cmd)
+            start_times[i] = time.monotonic()
         else:
             _log("error", f"'{label}' exited with code {proc.returncode}. Shutting down...")
             raise SystemExit(1)
@@ -264,6 +291,9 @@ def main() -> None:
         return proc
 
     procs = [spawn(label, cmd) for label, cmd, _ in process_specs]
+    # Per-process circuit-breaker state, parallel to procs/process_specs.
+    restart_counts = [0] * len(process_specs)
+    start_times = [time.monotonic()] * len(process_specs)
 
     # Install the custom Ctrl+C handler *before* announcing readiness, so the
     # very first press is handled gracefully (sets _shutdown_event) instead of
@@ -278,7 +308,7 @@ def main() -> None:
     # through to the finally block for an unconditional shutdown.
     try:
         while not _shutdown_event.is_set():
-            _monitor_once(procs, process_specs, spawn)
+            _monitor_once(procs, process_specs, spawn, restart_counts, start_times)
             _shutdown_event.wait(timeout=2)
     finally:
         _shutdown_all(procs)
