@@ -21,6 +21,7 @@ const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const axios = require('axios');
 const lastSeen = require('./last_seen');
+const webVersion = require('./web_version');
 
 // --- config ----------------------------------------------------------------
 
@@ -440,29 +441,20 @@ async function resolveQrMessage() {
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: 'sources/whatsapp/.wwebjs_auth' }),
   userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  // Pin a known-good WhatsApp Web version served via request interception.
-  // Without this, whatsapp-web.js scrapes the live page to auto-detect the
-  // version, calling `res.text()` in a response listener that has no try/catch.
-  // On certain navigations that throws "Could not load response body", which
-  // becomes an unhandled rejection and crashes the whole process. Serving a
-  // cached HTML takes the request-interception branch and never reads the
-  // response body, eliminating the crash and the WA-version-drift fragility.
+  // Pin a WhatsApp Web version served via request interception. Without this,
+  // whatsapp-web.js scrapes the live page to auto-detect the version, calling
+  // `res.text()` in a response listener that has no try/catch. On certain
+  // navigations that throws "Could not load response body", which becomes an
+  // unhandled rejection and crashes the whole process. Serving a cached HTML
+  // takes the request-interception branch and never reads the response body,
+  // eliminating the crash and the WA-version-drift fragility.
   //
-  // MAINTENANCE — this pin rots as WhatsApp deprecates old client builds, so an
-  // untouched pin will eventually stop connecting. Re-check roughly quarterly,
-  // or sooner if connections start failing on a previously-working session:
-  //   1. List available builds at github.com/wppconnect-team/wa-version.
-  //   2. Bump to a recent build — but NOT the newest. New builds regularly ship
-  //      breaking changes (the "Execution context was destroyed" crash loop that
-  //      motivated this pin came from a too-new build). Pick one a few releases
-  //      back and verify it reaches the QR / connects before committing.
-  //   3. Keep `whatsapp-web.js` itself up to date (`npm outdated`) on the same
-  //      cadence; library and build version need to stay roughly in step.
-  // Last verified working: 2.3000.1040532093-alpha (builds above 1040539221
-  // carried the break).
+  // The build is auto-resolved at startup (see resolveWebVersion below) so the
+  // pin can't rot into a forced device-unlink; this fallback is only used before
+  // that resolution completes and if the fetch fails.
   webVersionCache: {
     type: 'remote',
-    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1040532093-alpha.html',
+    remotePath: webVersion.remotePath(webVersion.FALLBACK_BUILD),
   },
   puppeteer: {
     args: ['--no-sandbox'],
@@ -575,9 +567,19 @@ client.on('ready', async () => {
 
 client.on('auth_failure', (m) => log('error', `auth_failure: ${m}`));
 
-client.on('disconnected', (reason) => {
+client.on('disconnected', async (reason) => {
   isReady = false;
-  log('warning', `Disconnected (${reason}). Reconnecting in 10s...`);
+  // A LOGOUT/UNPAIRED reason means WhatsApp unlinked this device: the saved
+  // session is dead, so reconnecting with it just loops back to a QR forever.
+  // Wipe it first so the reconnect shows a fresh QR cleanly. Transient drops
+  // (network blip, PC sleep — e.g. CONFLICT/NAVIGATION) keep the session and
+  // simply reconnect.
+  const loggedOut = /LOGOUT|UNPAIRED/i.test(String(reason));
+  log('warning', `Disconnected (${reason}). ${loggedOut ? 'Logged out — clearing dead session. ' : ''}Reconnecting in 10s...`);
+  if (loggedOut) {
+    await destroyBrowser();
+    await clearSession();
+  }
   setTimeout(() => {
     log('info', 'Reconnecting...');
     reconnect();
@@ -607,17 +609,39 @@ client.on('message', async (msg) => {
   }
 });
 
+// Fetch the current WhatsApp Web build list and pick a recent-but-not-newest
+// build, falling back to the pinned default if the network is unavailable.
+// Runs once at startup; reconnect() reuses the resolved remotePath so we don't
+// hammer GitHub on every reconnect.
+async function resolveWebVersion() {
+  try {
+    const res = await axios.get(webVersion.LIST_URL, {
+      headers: { Accept: 'application/vnd.github+json' },
+      timeout: 10000,
+    });
+    return webVersion.pickBuild(res.data.map((file) => file.name));
+  } catch (err) {
+    log('warning', `[version] Could not fetch build list (${err.message}) — using fallback ${webVersion.FALLBACK_BUILD}.`);
+    return webVersion.FALLBACK_BUILD;
+  }
+}
+
+// Bootstrap: resolve the build before the first initialize(), then start.
 // Catch transient startup failures (e.g. "execution context was destroyed"
 // when WhatsApp Web navigates during Puppeteer script injection). Exiting with
 // code 1 lets start.py restart the listener automatically; it usually succeeds
-// on the next attempt.
-// After MAX_INIT_FAILURES consecutive failures the stale session is wiped so
-// the next restart prompts a fresh QR scan instead of looping forever.
-client.initialize().catch(async (err) => {
-  log('error', `[init] initialize() failed — exiting for restart: ${err.message}`);
-  await recordInitFailure();
-  process.exit(1);
-});
+// on the next attempt. After MAX_INIT_FAILURES consecutive failures the stale
+// session is wiped so the next restart prompts a fresh QR scan instead of looping.
+(async () => {
+  const build = await resolveWebVersion();
+  client.options.webVersionCache.remotePath = webVersion.remotePath(build);
+  log('info', `[version] Pinning WhatsApp Web build ${build}`);
+  client.initialize().catch(async (err) => {
+    log('error', `[init] initialize() failed — exiting for restart: ${err.message}`);
+    await recordInitFailure();
+    process.exit(1);
+  });
+})();
 
 // Heartbeat: detect silent disconnects (e.g. after PC sleep) where the
 // 'disconnected' event never fires. Polls getState() and triggers a reconnect
