@@ -36,7 +36,11 @@
     "verification",
     "data scientist",
     "mechanical engineer",
-    "it infrastructure"
+    "it infrastructure",
+    "validation engineer",
+    "bi developer",
+    "physical design",
+    "product"
   ],
   "location_blocklist": [
     "Jerusalem",
@@ -46,7 +50,12 @@
     "North Israel",
     "Kiryat Motzkin",
     "ירושלים",
-    "Modiin-Maccabim-Reut"
+    "Modiin-Maccabim-Reut",
+    "Shoham",
+    "Yokne'am",
+    "Beitshean",
+    "חיפה",
+    "צפון"
   ],
   "min_salary": null
 }
