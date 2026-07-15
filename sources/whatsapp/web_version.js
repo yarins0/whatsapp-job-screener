@@ -28,7 +28,11 @@ const FALLBACK_BUILD = '2.3000.1042448437-alpha';
 
 // How many builds back from newest to select.
 // ponytail: fixed-offset heuristic. If a fetched build fails to connect, raise it.
-const OFFSET_FROM_NEWEST = 10;
+// Raised from 10 to 30 after 2.3000.1043041454-alpha (10 back at the time) connected
+// fine but broke Store-dependent calls (getChats/getChatById threw a minified "r"
+// error for every group) — 10 builds isn't enough of a buffer before whatsapp-web.js's
+// injected Store code catches up with WhatsApp's latest changes.
+const OFFSET_FROM_NEWEST = 30;
 
 // Sort key = the long numeric segment (e.g. 1040532093 in 2.3000.1040532093-alpha).
 function buildNumber(build) {
