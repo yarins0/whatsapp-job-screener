@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -59,6 +60,18 @@ async def test_extractor_allows_null_fields():
     assert result[0]["title"] == "Node.js developer"
     assert result[0]["company"] is None
     assert result[0]["skills"] == []
+
+
+def test_extraction_result_parses_stringified_jobs():
+    """Anthropic occasionally returns "jobs" as a JSON string, not a list."""
+    job = {
+        "title": "Node.js developer", "company": None, "location": None,
+        "remote": None, "skills": [], "salary": None, "contact": None,
+        "summary": "A Node.js role.",
+    }
+    result = ExtractionResult(jobs=json.dumps([job]))
+    assert len(result.jobs) == 1
+    assert result.jobs[0].title == "Node.js developer"
 
 
 @pytest.mark.asyncio

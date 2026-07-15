@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from langchain_core.messages import HumanMessage
 
@@ -29,6 +30,15 @@ class JobPost(BaseModel):
 
 class ExtractionResult(BaseModel):
     jobs: List[JobPost] = Field(description="All job postings found in the message.")
+
+    @field_validator("jobs", mode="before")
+    @classmethod
+    def _parse_stringified_jobs(cls, value):
+        # See CombinedResult._parse_stringified_jobs — the model occasionally
+        # emits "jobs" as a JSON-encoded string instead of a native array.
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
 
 
 _SYSTEM_PROMPT = """You extract structured job-posting data from WhatsApp messages.

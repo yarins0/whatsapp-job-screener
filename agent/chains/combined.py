@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from langchain_core.messages import HumanMessage
 
@@ -29,6 +30,16 @@ class CombinedResult(BaseModel):
         default_factory=list,
         description="All job postings found. Empty list when is_job_post is false.",
     )
+
+    @field_validator("jobs", mode="before")
+    @classmethod
+    def _parse_stringified_jobs(cls, value):
+        # The model occasionally emits "jobs" as a JSON-encoded string instead
+        # of a native array inside the tool-call arguments; decode it before
+        # validation instead of failing the whole response.
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
 
 
 _SYSTEM_PROMPT = """You are a classifier and extractor for WhatsApp job-posting messages.

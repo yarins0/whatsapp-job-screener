@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -51,6 +52,15 @@ async def test_combined_returns_empty_jobs_for_non_post():
 
     assert result["is_job_post"] is False
     assert result["jobs"] == []
+
+
+def test_combined_result_parses_stringified_jobs():
+    """Anthropic occasionally returns "jobs" as a JSON string, not a list."""
+    result = CombinedResult(
+        is_job_post=True, confidence=0.9, jobs=json.dumps([_JOB_BACKEND]),
+    )
+    assert len(result.jobs) == 1
+    assert result.jobs[0].title == "Backend Engineer"
 
 
 @pytest.mark.asyncio
