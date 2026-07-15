@@ -168,7 +168,7 @@ function loadGroups() {
 // groups.json so the Telegram bot can show human-readable names in /groups.
 // Preserves existing entries so names from previous sessions are not lost if
 // a group temporarily fails to load.
-async function saveGroupNames(groupIds) {
+async function saveGroupNames(groupIds, chatMap) {
   let data = {};
   try {
     data = JSON.parse(fs.readFileSync(GROUPS_FILE, 'utf8'));
@@ -176,7 +176,11 @@ async function saveGroupNames(groupIds) {
 
   for (const groupId of groupIds) {
     try {
-      const chat = await client.getChatById(groupId);
+      // getChatById() reliably throws right after 'ready' even for groups
+      // getChats() just returned successfully, so prefer the already-fetched
+      // chat object and only fall back to getChatById for groups missing
+      // from the snapshot (e.g. a group joined since the last poll).
+      const chat = chatMap.get(groupId) || await client.getChatById(groupId);
       data[groupId] = chat.name;
     } catch (err) {
       log('warning', `[groups] Could not resolve name for ${groupId}: ${err.message}`);
@@ -283,13 +287,15 @@ async function forwardMessage(msg, groupName) {
 
 // snapshotTimestamp is read by the caller before the loop starts, so live
 // messages arriving during catch-up can't advance `since` and cause misses.
-async function catchUp(groupId, snapshotTimestamp) {
+async function catchUp(groupId, snapshotTimestamp, chatMap) {
   const cutoff = Math.floor(Date.now() / 1000) - CATCHUP_MAX_AGE_S;
   const since = Math.max(snapshotTimestamp, cutoff);
 
   let chat;
   try {
-    chat = await client.getChatById(groupId);
+    // See saveGroupNames() — getChatById() throws right after 'ready', so
+    // prefer the chat object getChats() already fetched.
+    chat = chatMap.get(groupId) || await client.getChatById(groupId);
   } catch (err) {
     log('warning', `[catch-up] Could not resolve group ${groupId} — skipping. ${err.message}`);
     return;
@@ -504,25 +510,32 @@ let qrPrinted = false;
 // Read by the Telegram /listgroups command to show group IDs for discovery.
 const ALL_GROUPS_FILE = path.join(__dirname, '..', '..', 'agent', 'all_whatsapp_groups.json');
 
-// Fetch every WhatsApp group on the account and write a snapshot to
+// Fetch every WhatsApp group on the account, write a snapshot to
 // all_whatsapp_groups.json so the Telegram bot can serve /listgroups without
-// requiring the listener to be in discovery mode.
+// requiring the listener to be in discovery mode, and return a map of
+// group id -> Chat object so callers can reuse it instead of calling the
+// (broken right after 'ready') client.getChatById() again per group.
 async function saveAllGroups() {
   let chats;
   try {
     chats = await client.getChats();
   } catch (err) {
     log('warning', `[groups] Could not fetch all groups for snapshot: ${err.message}`);
-    return;
+    return new Map();
   }
   const groups = chats.filter((c) => c.isGroup);
   const snapshot = {};
-  groups.forEach((g) => { snapshot[g.id._serialized] = g.name; });
+  const chatMap = new Map();
+  groups.forEach((g) => {
+    snapshot[g.id._serialized] = g.name;
+    chatMap.set(g.id._serialized, g);
+  });
   try {
     fs.writeFileSync(ALL_GROUPS_FILE, JSON.stringify(snapshot, null, 2));
   } catch (err) {
     log('warning', `[groups] Could not write all_whatsapp_groups.json: ${err.message}`);
   }
+  return chatMap;
 }
 
 client.on('ready', async () => {
@@ -536,7 +549,9 @@ client.on('ready', async () => {
 
   // Always write a full snapshot of all groups so /listgroups in the Telegram
   // bot has up-to-date data regardless of which groups are being watched.
-  await saveAllGroups();
+  // Reuse the returned chat map for name resolution and catch-up below,
+  // since getChatById() is unreliable this soon after 'ready'.
+  const chatMap = await saveAllGroups();
 
   if (watchedGroups.length === 0) {
     // Discovery mode: list all groups so the user can pick IDs.
@@ -554,13 +569,13 @@ client.on('ready', async () => {
   }
 
   // Cache group display names so the Telegram bot can show them in /groups.
-  await saveGroupNames(watchedGroups);
+  await saveGroupNames(watchedGroups, chatMap);
 
   // Snapshot timestamps before the loop so that live messages arriving during
   // catch-up can't advance a group's cursor and cause older messages to be missed.
   const snapshot = lastSeen.load();
   for (const groupId of watchedGroups) {
-    await catchUp(groupId, snapshot[groupId] || 0);
+    await catchUp(groupId, snapshot[groupId] || 0, chatMap);
   }
   log('info', `Ready — watching ${watchedGroups.length} group(s)`);
 });
