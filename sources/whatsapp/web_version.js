@@ -26,12 +26,20 @@ const LIST_URL =
 // startup never depends on the network. Keep this a known-good recent build.
 const FALLBACK_BUILD = '2.3000.1042448437-alpha';
 
-// How many builds back from newest to select.
-// ponytail: fixed-offset heuristic. If a fetched build fails to connect, raise it.
-// Raised from 10 to 30 after 2.3000.1043041454-alpha (10 back at the time) connected
-// fine but broke Store-dependent calls (getChats/getChatById threw a minified "r"
-// error for every group) — 10 builds isn't enough of a buffer before whatsapp-web.js's
-// injected Store code catches up with WhatsApp's latest changes.
+// How many builds back from newest to select. Only guards against connecting
+// at all (newest builds occasionally ship breaking changes); it is NOT a lever
+// for Store-call failures.
+//
+// Raising this was previously blamed for fixing "getChats/getChatById threw a
+// minified r for every group". That diagnosis was wrong: the real cause was a
+// whatsapp-web.js bug in the injected getChatModel() last-message lookup, fixed
+// by patchLastMessageLookup() in listener.js. The offset is also a poor lever
+// by construction — builds ship faster than the index moves, so the build this
+// picked after the bump was *newer* than the one it was meant to avoid.
+//
+// ponytail: fixed-offset heuristic. If a fetched build fails to CONNECT, raise
+// it. If it connects but Store calls throw, the bug is in whatsapp-web.js —
+// probe the failing call instead of touching this number.
 const OFFSET_FROM_NEWEST = 30;
 
 // Sort key = the long numeric segment (e.g. 1040532093 in 2.3000.1040532093-alpha).

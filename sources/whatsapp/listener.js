@@ -510,11 +510,47 @@ let qrPrinted = false;
 // Read by the Telegram /listgroups command to show group IDs for discovery.
 const ALL_GROUPS_FILE = path.join(__dirname, '..', '..', 'agent', 'all_whatsapp_groups.json');
 
+// Work around a whatsapp-web.js bug against current WhatsApp Web builds.
+//
+// The injected WWebJS.getChatModel() resolves a chat's last message via
+// Msg.getMessagesById([chat.lastReceivedKey._serialized]). On current builds
+// lastReceivedKey is present but its _serialized field is undefined, so that
+// call reaches IndexedDB with no key and throws
+//   DataError: Failed to execute 'get' on 'IDBObjectStore': No key or key range specified.
+// Measured on this account: 485 of 545 chats threw. getChats() wraps every chat
+// in Promise.all, so a single failure rejects the whole call — which is why
+// both getChats() and getChatById() failed with a minified "r" for every group.
+//
+// Guarding the shared collection method fixes every caller at once. Filtering
+// unusable ids can only prevent the crash: an undefined id could never have
+// matched a record. Returns the same {messages} shape the callers destructure.
+// The listener never reads chat.lastMessage, so losing it costs nothing.
+//
+// Re-applied on every 'ready' because a reconnect reloads the page and rebuilds
+// the Store. Remove once whatsapp-web.js ships a fix upstream.
+async function patchLastMessageLookup() {
+  try {
+    await client.pupPage.evaluate(() => {
+      const Msg = window.require('WAWebCollections').Msg;
+      if (Msg.__guardedGetMessagesById) return;
+      const original = Msg.getMessagesById.bind(Msg);
+      Msg.getMessagesById = async (ids, ...rest) => {
+        const usable = (ids || []).filter((id) => typeof id === 'string' && id.length > 0);
+        if (usable.length === 0) return { messages: [] };
+        return original(usable, ...rest);
+      };
+      Msg.__guardedGetMessagesById = true;
+    });
+  } catch (err) {
+    log('warning', `[store] Could not apply lastMessage guard: ${err.message}`);
+  }
+}
+
 // Fetch every WhatsApp group on the account, write a snapshot to
 // all_whatsapp_groups.json so the Telegram bot can serve /listgroups without
 // requiring the listener to be in discovery mode, and return a map of
-// group id -> Chat object so callers can reuse it instead of calling the
-// (broken right after 'ready') client.getChatById() again per group.
+// group id -> Chat object so callers can reuse it instead of calling
+// client.getChatById() again per group.
 async function saveAllGroups() {
   let chats;
   try {
@@ -542,6 +578,8 @@ client.on('ready', async () => {
   isReady = true;
   resetFailCount(); // successful init — clear any accumulated failure count
   await resolveQrMessage();
+  // Must run before any getChats()/getChatById() call — see patchLastMessageLookup.
+  await patchLastMessageLookup();
   // Snapshot the groups list once at startup — used for catch-up only.
   // Live message filtering re-reads groups.json each time, so /addgroup
   // and /removegroup take effect without a restart.
